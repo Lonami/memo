@@ -3,6 +3,7 @@ use std::mem::{self, MaybeUninit};
 use std::ptr::NonNull;
 use winapi::ctypes::c_void;
 use winapi::shared::minwindef::{DWORD, FALSE, HMODULE};
+use winapi::um::winnt;
 
 #[derive(Debug)]
 pub struct Process {
@@ -36,7 +37,7 @@ impl Process {
         // SAFETY: the call doesn't have dangerous side-effects
         NonNull::new(unsafe {
             winapi::um::processthreadsapi::OpenProcess(
-                winapi::um::winnt::PROCESS_QUERY_INFORMATION,
+                winnt::PROCESS_QUERY_INFORMATION | winnt::PROCESS_VM_READ,
                 FALSE,
                 pid,
             )
