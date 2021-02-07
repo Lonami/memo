@@ -1,6 +1,6 @@
-mod utils;
+mod ui;
 
-use std::collections::BTreeMap;
+use std::fmt;
 use std::io;
 use std::mem::{self, MaybeUninit};
 use std::ptr::NonNull;
@@ -111,22 +111,32 @@ impl Drop for Process {
     }
 }
 
+struct ProcessItem {
+    pid: u32,
+    name: String,
+}
+
+impl fmt::Display for ProcessItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} (pid={})", self.name, self.pid)
+    }
+}
+
 fn main() {
     let processes = enum_proc()
         .unwrap()
         .into_iter()
         .flat_map(Process::open)
         .flat_map(|proc| match proc.name() {
-            Ok(name) => Ok((proc.pid(), name)),
+            Ok(name) => Ok(ProcessItem {
+                pid: proc.pid(),
+                name,
+            }),
             Err(err) => Err(err),
         })
-        .collect::<BTreeMap<_, _>>();
+        .collect::<Vec<_>>();
 
-    processes
-        .iter()
-        .for_each(|(pid, name)| println!("{}: {}", pid, name));
-
-    let pid = utils::prompt("Enter pid: ").trim().parse().unwrap();
-    let process = Process::open(pid).unwrap();
+    let item = ui::list_picker(&processes);
+    let process = Process::open(item.pid).unwrap();
     println!("Opened process {:?}", process);
 }

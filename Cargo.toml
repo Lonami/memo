@@ -5,4 +5,5 @@ authors = ["Lonami Exo <totufals@hotmail.com>"]
 edition = "2018"
 
 [dependencies]
+crossterm = "0.19.0"
 winapi = { version = "0.3.9", features = ["psapi", "processthreadsapi", "handleapi"] }
