@@ -5,15 +5,23 @@ use winapi::ctypes::c_void;
 use winapi::shared::minwindef::{DWORD, FALSE, HMODULE};
 use winapi::um::winnt;
 
+/// How many process identifiers will be enumerated at most.
+const MAX_PIDS: usize = 1024;
+
+/// How many ASCII characters to read for a process name at most.
+const MAX_PROC_NAME_LEN: usize = 64;
+
+/// A handle to an opened process.
 #[derive(Debug)]
 pub struct Process {
     pid: u32,
     handle: NonNull<c_void>,
 }
 
+/// Enumerate the process identifiers of all programs currently running.
 pub fn enum_proc() -> io::Result<Vec<u32>> {
     let mut size = 0;
-    let mut pids = Vec::<DWORD>::with_capacity(1024);
+    let mut pids = Vec::<DWORD>::with_capacity(MAX_PIDS);
     // SAFETY: the pointer is valid and the size matches the capacity.
     if unsafe {
         winapi::um::psapi::EnumProcesses(
@@ -33,6 +41,7 @@ pub fn enum_proc() -> io::Result<Vec<u32>> {
 }
 
 impl Process {
+    /// Open a process handle given its process identifier.
     pub fn open(pid: u32) -> io::Result<Self> {
         // SAFETY: the call doesn't have dangerous side-effects
         NonNull::new(unsafe {
@@ -46,6 +55,7 @@ impl Process {
         .ok_or_else(io::Error::last_os_error)
     }
 
+    /// Return the base name of the first module loaded by this process.
     pub fn name(&self) -> io::Result<String> {
         let mut module = MaybeUninit::<HMODULE>::uninit();
         let mut size = 0;
@@ -65,7 +75,7 @@ impl Process {
         // SAFETY: the call succeeded, so module is initialized.
         let module = unsafe { module.assume_init() };
 
-        let mut buffer = Vec::<u8>::with_capacity(64);
+        let mut buffer = Vec::<u8>::with_capacity(MAX_PROC_NAME_LEN);
         // SAFETY: the handle, module and buffer are all valid.
         let length = unsafe {
             winapi::um::psapi::GetModuleBaseNameA(
