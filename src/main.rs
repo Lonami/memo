@@ -1,6 +1,14 @@
 use std::io;
 use std::mem;
+use std::ptr::NonNull;
+use winapi::ctypes::c_void;
 use winapi::shared::minwindef::{DWORD, FALSE};
+
+#[derive(Debug)]
+pub struct Process {
+    pid: u32,
+    handle: NonNull<c_void>,
+}
 
 pub fn enum_proc() -> io::Result<Vec<u32>> {
     let mut size = 0;
@@ -23,6 +31,37 @@ pub fn enum_proc() -> io::Result<Vec<u32>> {
     Ok(pids)
 }
 
+impl Process {
+    pub fn open(pid: u32) -> io::Result<Self> {
+        // SAFETY: the call doesn't have dangerous side-effects
+        NonNull::new(unsafe { winapi::um::processthreadsapi::OpenProcess(0, FALSE, pid) })
+            .map(|handle| Self { pid, handle })
+            .ok_or_else(io::Error::last_os_error)
+    }
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        // SAFETY: the handle is valid and non-null
+        let ret = unsafe { winapi::um::handleapi::CloseHandle(self.handle.as_mut()) };
+        assert_ne!(ret, FALSE);
+    }
+}
+
 fn main() {
-    dbg!(enum_proc().unwrap().len());
+    let mut success = 0;
+    let mut failed = 0;
+    enum_proc()
+        .unwrap()
+        .into_iter()
+        .for_each(|pid| match Process::open(pid) {
+            Ok(_) => success += 1,
+            Err(_) => failed += 1,
+        });
+
+    eprintln!(
+        "Successfully opened {}/{} processes",
+        success,
+        success + failed
+    );
 }
