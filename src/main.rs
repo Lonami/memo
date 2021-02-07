@@ -1,8 +1,8 @@
 use std::io;
-use std::mem;
+use std::mem::{self, MaybeUninit};
 use std::ptr::NonNull;
 use winapi::ctypes::c_void;
-use winapi::shared::minwindef::{DWORD, FALSE};
+use winapi::shared::minwindef::{DWORD, FALSE, HMODULE};
 
 #[derive(Debug)]
 pub struct Process {
@@ -44,6 +44,44 @@ impl Process {
         .map(|handle| Self { pid, handle })
         .ok_or_else(io::Error::last_os_error)
     }
+
+    pub fn name(&self) -> io::Result<String> {
+        let mut module = MaybeUninit::<HMODULE>::uninit();
+        let mut size = 0;
+        // SAFETY: the pointer is valid and the size is correct.
+        if unsafe {
+            winapi::um::psapi::EnumProcessModules(
+                self.handle.as_ptr(),
+                module.as_mut_ptr(),
+                mem::size_of::<HMODULE>() as u32,
+                &mut size,
+            )
+        } == FALSE
+        {
+            return Err(io::Error::last_os_error());
+        }
+
+        // SAFETY: the call succeeded, so module is initialized.
+        let module = unsafe { module.assume_init() };
+
+        let mut buffer = Vec::<u8>::with_capacity(64);
+        // SAFETY: the handle, module and buffer are all valid.
+        let length = unsafe {
+            winapi::um::psapi::GetModuleBaseNameA(
+                self.handle.as_ptr(),
+                module,
+                buffer.as_mut_ptr().cast(),
+                buffer.capacity() as u32,
+            )
+        };
+        if length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        // SAFETY: the call succeeded and length represents bytes.
+        unsafe { buffer.set_len(length as usize) };
+        Ok(String::from_utf8(buffer).unwrap())
+    }
 }
 
 impl Drop for Process {
@@ -55,19 +93,14 @@ impl Drop for Process {
 }
 
 fn main() {
-    let mut success = 0;
-    let mut failed = 0;
     enum_proc()
         .unwrap()
         .into_iter()
         .for_each(|pid| match Process::open(pid) {
-            Ok(_) => success += 1,
-            Err(_) => failed += 1,
+            Ok(proc) => match proc.name() {
+                Ok(name) => println!("{}: {}", pid, name),
+                Err(e) => println!("{}: (failed to get name: {})", pid, e),
+            },
+            Err(e) => eprintln!("failed to open {}: {}", pid, e),
         });
-
-    eprintln!(
-        "Successfully opened {}/{} processes",
-        success,
-        success + failed
-    );
 }
