@@ -1,3 +1,6 @@
+mod utils;
+
+use std::collections::BTreeMap;
 use std::io;
 use std::mem::{self, MaybeUninit};
 use std::ptr::NonNull;
@@ -55,6 +58,11 @@ impl Process {
         .ok_or_else(io::Error::last_os_error)
     }
 
+    /// Return the process identifier.
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+
     /// Return the base name of the first module loaded by this process.
     pub fn name(&self) -> io::Result<String> {
         let mut module = MaybeUninit::<HMODULE>::uninit();
@@ -104,14 +112,21 @@ impl Drop for Process {
 }
 
 fn main() {
-    enum_proc()
+    let processes = enum_proc()
         .unwrap()
         .into_iter()
-        .for_each(|pid| match Process::open(pid) {
-            Ok(proc) => match proc.name() {
-                Ok(name) => println!("{}: {}", pid, name),
-                Err(e) => println!("{}: (failed to get name: {})", pid, e),
-            },
-            Err(e) => eprintln!("failed to open {}: {}", pid, e),
-        });
+        .flat_map(Process::open)
+        .flat_map(|proc| match proc.name() {
+            Ok(name) => Ok((proc.pid(), name)),
+            Err(err) => Err(err),
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    processes
+        .iter()
+        .for_each(|(pid, name)| println!("{}: {}", pid, name));
+
+    let pid = utils::prompt("Enter pid: ").trim().parse().unwrap();
+    let process = Process::open(pid).unwrap();
+    println!("Opened process {:?}", process);
 }
