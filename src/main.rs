@@ -34,9 +34,15 @@ pub fn enum_proc() -> io::Result<Vec<u32>> {
 impl Process {
     pub fn open(pid: u32) -> io::Result<Self> {
         // SAFETY: the call doesn't have dangerous side-effects
-        NonNull::new(unsafe { winapi::um::processthreadsapi::OpenProcess(0, FALSE, pid) })
-            .map(|handle| Self { pid, handle })
-            .ok_or_else(io::Error::last_os_error)
+        NonNull::new(unsafe {
+            winapi::um::processthreadsapi::OpenProcess(
+                winapi::um::winnt::PROCESS_QUERY_INFORMATION,
+                FALSE,
+                pid,
+            )
+        })
+        .map(|handle| Self { pid, handle })
+        .ok_or_else(io::Error::last_os_error)
     }
 }
 
