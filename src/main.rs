@@ -200,7 +200,29 @@ fn main() {
         .collect::<Vec<_>>();
 
     println!("Scanning {} memory regions", regions.len());
+    let target = ui::prompt("Which exact value to scan for?: ")
+        .trim()
+        .parse::<i32>()
+        .unwrap();
+
+    let target = target.to_ne_bytes();
     regions.into_iter().for_each(|region| {
-        let _memory = process.read_memory(region.BaseAddress as _, region.RegionSize);
+        match process.read_memory(region.BaseAddress as _, region.RegionSize) {
+            Ok(memory) => memory
+                .windows(target.len())
+                .enumerate()
+                .for_each(|(offset, window)| {
+                    if window == target {
+                        println!(
+                            "Found exact value at [{:?}+{:x}]",
+                            region.BaseAddress, offset
+                        );
+                    }
+                }),
+            Err(err) => eprintln!(
+                "Failed to read {} bytes at {:?}: {}",
+                region.RegionSize, region.BaseAddress, err,
+            ),
+        }
     })
 }
