@@ -14,6 +14,10 @@ const MAX_PIDS: usize = 1024;
 /// How many ASCII characters to read for a process name at most.
 const MAX_PROC_NAME_LEN: usize = 64;
 
+/// Environment variable with the process identifier of the process to work with.
+/// If the variable if not set (`set PID=...`), it's asked at runtime.
+static PROGRAM_PID: Option<&str> = option_env!("PID");
+
 /// A handle to an opened process.
 #[derive(Debug)]
 pub struct Process {
@@ -171,21 +175,27 @@ impl fmt::Display for ProcessItem {
 }
 
 fn main() {
-    let processes = enum_proc()
-        .unwrap()
-        .into_iter()
-        .flat_map(Process::open)
-        .flat_map(|proc| match proc.name() {
-            Ok(name) => Ok(ProcessItem {
-                pid: proc.pid(),
-                name,
-            }),
-            Err(err) => Err(err),
-        })
-        .collect::<Vec<_>>();
+    let pid = PROGRAM_PID
+        .map(|pid| pid.parse::<u32>().unwrap())
+        .unwrap_or_else(|| {
+            let processes = enum_proc()
+                .unwrap()
+                .into_iter()
+                .flat_map(Process::open)
+                .flat_map(|proc| match proc.name() {
+                    Ok(name) => Ok(ProcessItem {
+                        pid: proc.pid(),
+                        name,
+                    }),
+                    Err(err) => Err(err),
+                })
+                .collect::<Vec<_>>();
 
-    let item = ui::list_picker(&processes);
-    let process = Process::open(item.pid).unwrap();
+            let item = ui::list_picker(&processes);
+            item.pid
+        });
+
+    let process = Process::open(pid).unwrap();
     println!("Opened process {:?}", process);
 
     let mask = winnt::PAGE_EXECUTE_READWRITE
