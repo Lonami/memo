@@ -188,5 +188,19 @@ fn main() {
     let process = Process::open(item.pid).unwrap();
     println!("Opened process {:?}", process);
 
-    dbg!(process.memory_regions().len());
+    let mask = winnt::PAGE_EXECUTE_READWRITE
+        | winnt::PAGE_EXECUTE_WRITECOPY
+        | winnt::PAGE_READWRITE
+        | winnt::PAGE_WRITECOPY;
+
+    let regions = process
+        .memory_regions()
+        .into_iter()
+        .filter(|p| (p.Protect & mask) != 0)
+        .collect::<Vec<_>>();
+
+    println!("Scanning {} memory regions", regions.len());
+    regions.into_iter().for_each(|region| {
+        let _memory = process.read_memory(region.BaseAddress as _, region.RegionSize);
+    })
 }
