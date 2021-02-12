@@ -102,6 +102,25 @@ impl Process {
         Ok(String::from_utf8(buffer).unwrap())
     }
 
+    pub fn memory_regions(&self) -> io::Result<winapi::um::winnt::MEMORY_BASIC_INFORMATION> {
+        let mut info = MaybeUninit::uninit();
+
+        // SAFETY: the info structure points to valid memory.
+        let written = unsafe {
+            winapi::um::memoryapi::VirtualQueryEx(
+                self.handle.as_ptr(),
+                0x610a45c491 as *const _,
+                info.as_mut_ptr(),
+                mem::size_of::<winapi::um::winnt::MEMORY_BASIC_INFORMATION>(),
+            )
+        };
+        if written == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(unsafe { info.assume_init() })
+        }
+    }
+
     pub fn read_memory(&self, addr: usize, n: usize) -> io::Result<Vec<u8>> {
         let mut buffer = Vec::<u8>::with_capacity(n);
         let mut read = 0;
@@ -162,4 +181,23 @@ fn main() {
     let item = ui::list_picker(&processes);
     let process = Process::open(item.pid).unwrap();
     println!("Opened process {:?}", process);
+
+    let region = process.memory_regions().unwrap();
+    eprintln!(
+        "Region:
+        BaseAddress: {:?}
+        AllocationBase: {:?}
+        AllocationProtect: {:?}
+        RegionSize: {:?}
+        State: {:?}
+        Protect: {:?}
+        Type: {:?}",
+        region.BaseAddress,
+        region.AllocationBase,
+        region.AllocationProtect,
+        region.RegionSize,
+        region.State,
+        region.Protect,
+        region.Type,
+    );
 }
