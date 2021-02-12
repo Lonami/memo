@@ -101,6 +101,29 @@ impl Process {
         unsafe { buffer.set_len(length as usize) };
         Ok(String::from_utf8(buffer).unwrap())
     }
+
+    pub fn read_memory(&self, addr: usize, n: usize) -> io::Result<Vec<u8>> {
+        let mut buffer = Vec::<u8>::with_capacity(n);
+        let mut read = 0;
+
+        // SAFETY: the buffer points to valid memory, and the buffer size is correctly set.
+        if unsafe {
+            winapi::um::memoryapi::ReadProcessMemory(
+                self.handle.as_ptr(),
+                addr as *const _,
+                buffer.as_mut_ptr().cast(),
+                buffer.capacity(),
+                &mut read,
+            )
+        } == FALSE
+        {
+            Err(io::Error::last_os_error())
+        } else {
+            // SAFETY: the call succeeded and `read` contains the amount of bytes written.
+            unsafe { buffer.set_len(read as usize) };
+            Ok(buffer)
+        }
+    }
 }
 
 impl Drop for Process {
