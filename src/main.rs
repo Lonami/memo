@@ -212,6 +212,7 @@ fn main() {
     println!("Scanning {} memory regions", regions.len());
     let target = ui::prompt::<i32>("Which exact value to scan for?: ").unwrap();
     let target = target.to_ne_bytes();
+    let mut locations = Vec::with_capacity(regions.len());
     regions.into_iter().for_each(|region| {
         match process.read_memory(region.BaseAddress as _, region.RegionSize) {
             Ok(memory) => memory
@@ -220,10 +221,7 @@ fn main() {
                 .step_by(4)
                 .for_each(|(offset, window)| {
                     if window == target {
-                        println!(
-                            "Found exact value at [{:?}+{:x}]",
-                            region.BaseAddress, offset
-                        );
+                        locations.push(region.BaseAddress as usize + offset);
                     }
                 }),
             Err(err) => eprintln!(
@@ -231,5 +229,15 @@ fn main() {
                 region.RegionSize, region.BaseAddress, err,
             ),
         }
-    })
+    });
+    println!("Found {} locations", locations.len());
+
+    let target = ui::prompt::<i32>("Which exact value to scan for next?: ").unwrap();
+    let target = target.to_ne_bytes();
+    locations.retain(|addr| match process.read_memory(*addr, target.len()) {
+        Ok(memory) => memory == target,
+        Err(_) => false,
+    });
+
+    println!("Now have {} location(s)", locations.len());
 }
