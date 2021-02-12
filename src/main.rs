@@ -53,7 +53,10 @@ impl Process {
         // SAFETY: the call doesn't have dangerous side-effects
         NonNull::new(unsafe {
             winapi::um::processthreadsapi::OpenProcess(
-                winnt::PROCESS_QUERY_INFORMATION | winnt::PROCESS_VM_READ,
+                winnt::PROCESS_QUERY_INFORMATION
+                    | winnt::PROCESS_VM_READ
+                    | winnt::PROCESS_VM_WRITE
+                    | winnt::PROCESS_VM_OPERATION,
                 FALSE,
                 pid,
             )
