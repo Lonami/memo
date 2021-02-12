@@ -153,6 +153,26 @@ impl Process {
             Ok(buffer)
         }
     }
+
+    pub fn write_memory(&self, addr: usize, value: &[u8]) -> io::Result<usize> {
+        let mut written = 0;
+
+        // SAFETY: the input value buffer points to valid memory.
+        if unsafe {
+            winapi::um::memoryapi::WriteProcessMemory(
+                self.handle.as_ptr(),
+                addr as *mut _,
+                value.as_ptr().cast(),
+                value.len(),
+                &mut written,
+            )
+        } == FALSE
+        {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(written)
+        }
+    }
 }
 
 impl Drop for Process {
@@ -245,4 +265,13 @@ fn main() {
 
         println!("Now have {} location(s)", locations.len());
     }
+
+    let new_value = ui::prompt::<i32>("Enter new memory value: ").unwrap();
+    let new_value = new_value.to_ne_bytes();
+    locations
+        .into_iter()
+        .for_each(|addr| match process.write_memory(addr, &new_value) {
+            Ok(n) => eprintln!("Written {} bytes to [{:x}]", n, addr),
+            Err(e) => eprintln!("Failed to write to [{:x}]: {}", addr, e),
+        });
 }
