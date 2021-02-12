@@ -221,6 +221,7 @@ fn main() {
             Ok(memory) => memory
                 .windows(target.len())
                 .enumerate()
+                .step_by(4)
                 .for_each(|(offset, window)| {
                     if window == target {
                         println!(
