@@ -233,7 +233,10 @@ fn main() {
     println!("Found {} locations", locations.len());
 
     while locations.len() != 1 {
-        let target = ui::prompt::<i32>("Which exact value to scan for next?: ").unwrap();
+        let target = match ui::prompt::<i32>("Which exact value to scan for next?: ") {
+            Ok(n) => n,
+            Err(_) => break,
+        };
         let target = target.to_ne_bytes();
         locations.retain(|addr| match process.read_memory(*addr, target.len()) {
             Ok(memory) => memory == target,
