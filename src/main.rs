@@ -232,12 +232,14 @@ fn main() {
     });
     println!("Found {} locations", locations.len());
 
-    let target = ui::prompt::<i32>("Which exact value to scan for next?: ").unwrap();
-    let target = target.to_ne_bytes();
-    locations.retain(|addr| match process.read_memory(*addr, target.len()) {
-        Ok(memory) => memory == target,
-        Err(_) => false,
-    });
+    while locations.len() != 1 {
+        let target = ui::prompt::<i32>("Which exact value to scan for next?: ").unwrap();
+        let target = target.to_ne_bytes();
+        locations.retain(|addr| match process.read_memory(*addr, target.len()) {
+            Ok(memory) => memory == target,
+            Err(_) => false,
+        });
 
-    println!("Now have {} location(s)", locations.len());
+        println!("Now have {} location(s)", locations.len());
+    }
 }
