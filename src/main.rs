@@ -210,11 +210,7 @@ fn main() {
         .collect::<Vec<_>>();
 
     println!("Scanning {} memory regions", regions.len());
-    let target = ui::prompt("Which exact value to scan for?: ")
-        .trim()
-        .parse::<i32>()
-        .unwrap();
-
+    let target = ui::prompt::<i32>("Which exact value to scan for?: ").unwrap();
     let target = target.to_ne_bytes();
     regions.into_iter().for_each(|region| {
         match process.read_memory(region.BaseAddress as _, region.RegionSize) {

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::io::{stdin, stdout, Write};
+use std::str::FromStr;
 
 // ASCII codes for backspace and escape keys (why does Rust not have escape
 // sequences for these? https://doc.rust-lang.org/stable/reference/tokens.html#ascii-escapes).
@@ -31,7 +32,7 @@ fn wait_key() -> char {
 
 /// Print a message inline and wait for the user to type another line.
 /// Behaves much like Python's `input`.
-pub fn prompt(message: &str) -> String {
+pub fn prompt<F: FromStr>(message: &str) -> Result<F, F::Err> {
     {
         let stdout = stdout();
         let mut stdout = stdout.lock();
@@ -40,7 +41,7 @@ pub fn prompt(message: &str) -> String {
     }
     let mut input = String::new();
     stdin().read_line(&mut input).unwrap();
-    input
+    input.trim().parse()
 }
 
 /// Shows an interactive list picker, where users can refine their search.
@@ -96,10 +97,7 @@ pub fn list_picker<T: Display>(items: &[T]) -> &T {
             .enumerate()
             .for_each(|(i, (key, _))| println!("{}. {}", i, key));
 
-        prompt("Which of the filtered items do you want?: ")
-            .trim()
-            .parse()
-            .unwrap()
+        prompt::<usize>("Which of the filtered items do you want?: ").unwrap()
     } else {
         println!();
         0
