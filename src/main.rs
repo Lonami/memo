@@ -102,22 +102,28 @@ impl Process {
         Ok(String::from_utf8(buffer).unwrap())
     }
 
-    pub fn memory_regions(&self) -> io::Result<winapi::um::winnt::MEMORY_BASIC_INFORMATION> {
+    pub fn memory_regions(&self) -> Vec<winapi::um::winnt::MEMORY_BASIC_INFORMATION> {
+        let mut base = 0;
+        let mut regions = Vec::new();
         let mut info = MaybeUninit::uninit();
 
-        // SAFETY: the info structure points to valid memory.
-        let written = unsafe {
-            winapi::um::memoryapi::VirtualQueryEx(
-                self.handle.as_ptr(),
-                0x610a45c491 as *const _,
-                info.as_mut_ptr(),
-                mem::size_of::<winapi::um::winnt::MEMORY_BASIC_INFORMATION>(),
-            )
-        };
-        if written == 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(unsafe { info.assume_init() })
+        loop {
+            // SAFETY: the info structure points to valid memory.
+            let written = unsafe {
+                winapi::um::memoryapi::VirtualQueryEx(
+                    self.handle.as_ptr(),
+                    base as *const _,
+                    info.as_mut_ptr(),
+                    mem::size_of::<winapi::um::winnt::MEMORY_BASIC_INFORMATION>(),
+                )
+            };
+            if written == 0 {
+                break regions;
+            }
+            // SAFETY: a non-zero amount was written to the structure
+            let info = unsafe { info.assume_init() };
+            base = info.BaseAddress as usize + info.RegionSize;
+            regions.push(info);
         }
     }
 
@@ -182,22 +188,5 @@ fn main() {
     let process = Process::open(item.pid).unwrap();
     println!("Opened process {:?}", process);
 
-    let region = process.memory_regions().unwrap();
-    eprintln!(
-        "Region:
-        BaseAddress: {:?}
-        AllocationBase: {:?}
-        AllocationProtect: {:?}
-        RegionSize: {:?}
-        State: {:?}
-        Protect: {:?}
-        Type: {:?}",
-        region.BaseAddress,
-        region.AllocationBase,
-        region.AllocationProtect,
-        region.RegionSize,
-        region.State,
-        region.Protect,
-        region.Type,
-    );
+    dbg!(process.memory_regions().len());
 }
