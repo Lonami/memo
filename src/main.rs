@@ -1,7 +1,7 @@
 mod scan;
 mod ui;
 
-pub use scan::Scan;
+pub use scan::{CandidateLocations, Region, Scan, Value};
 
 use std::fmt;
 use std::io;
@@ -10,6 +10,7 @@ use std::ptr::NonNull;
 use winapi::ctypes::c_void;
 use winapi::shared::minwindef::{DWORD, FALSE, HMODULE};
 use winapi::um::winnt;
+use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
 
 /// How many process identifiers will be enumerated at most.
 const MAX_PIDS: usize = 1024;
@@ -112,7 +113,7 @@ impl Process {
         Ok(String::from_utf8(buffer).unwrap())
     }
 
-    pub fn memory_regions(&self) -> Vec<winapi::um::winnt::MEMORY_BASIC_INFORMATION> {
+    pub fn memory_regions(&self) -> Vec<MEMORY_BASIC_INFORMATION> {
         let mut base = 0;
         let mut regions = Vec::new();
         let mut info = MaybeUninit::uninit();
@@ -124,7 +125,7 @@ impl Process {
                     self.handle.as_ptr(),
                     base as *const _,
                     info.as_mut_ptr(),
-                    mem::size_of::<winapi::um::winnt::MEMORY_BASIC_INFORMATION>(),
+                    mem::size_of::<MEMORY_BASIC_INFORMATION>(),
                 )
             };
             if written == 0 {
@@ -178,6 +179,39 @@ impl Process {
         } else {
             Ok(written)
         }
+    }
+
+    pub fn scan_regions(&self, regions: &[MEMORY_BASIC_INFORMATION], scan: Scan) -> Vec<Region> {
+        regions
+            .iter()
+            .map(|region| match scan {
+                Scan::Exact(n) => {
+                    let target = n.to_ne_bytes();
+                    let mut locations = Vec::new();
+                    match self.read_memory(region.BaseAddress as _, region.RegionSize) {
+                        Ok(memory) => memory
+                            .windows(target.len())
+                            .enumerate()
+                            .step_by(4)
+                            .for_each(|(offset, window)| {
+                                if window == target {
+                                    locations.push(region.BaseAddress as usize + offset);
+                                }
+                            }),
+                        Err(err) => eprintln!(
+                            "Failed to read {} bytes at {:?}: {}",
+                            region.RegionSize, region.BaseAddress, err,
+                        ),
+                    }
+                    Region {
+                        info: region.clone(),
+                        locations: CandidateLocations::Discrete { locations },
+                        value: Value::Exact(n),
+                    }
+                }
+                Scan::Unknown => todo!(),
+            })
+            .collect()
     }
 }
 
@@ -236,48 +270,12 @@ fn main() {
         .collect::<Vec<_>>();
 
     println!("Scanning {} memory regions", regions.len());
-    let Scan::Exact(target) = ui::prompt_scan().unwrap();
-    let target = target.to_ne_bytes();
-    let mut locations = Vec::with_capacity(regions.len());
-    regions.into_iter().for_each(|region| {
-        match process.read_memory(region.BaseAddress as _, region.RegionSize) {
-            Ok(memory) => memory
-                .windows(target.len())
-                .enumerate()
-                .step_by(4)
-                .for_each(|(offset, window)| {
-                    if window == target {
-                        locations.push(region.BaseAddress as usize + offset);
-                    }
-                }),
-            Err(err) => eprintln!(
-                "Failed to read {} bytes at {:?}: {}",
-                region.RegionSize, region.BaseAddress, err,
-            ),
-        }
-    });
-    println!("Found {} locations", locations.len());
+    let scan = ui::prompt_scan().unwrap();
+    let last_scan = process.scan_regions(&regions, scan);
+    println!(
+        "Found {} locations",
+        last_scan.iter().map(|r| r.locations.len()).sum::<usize>()
+    );
 
-    while locations.len() != 1 {
-        let target = match ui::prompt_scan() {
-            Ok(Scan::Exact(n)) => n,
-            Err(_) => break,
-        };
-        let target = target.to_ne_bytes();
-        locations.retain(|addr| match process.read_memory(*addr, target.len()) {
-            Ok(memory) => memory == target,
-            Err(_) => false,
-        });
-
-        println!("Now have {} location(s)", locations.len());
-    }
-
-    let new_value = ui::prompt::<i32>("Enter new memory value: ").unwrap();
-    let new_value = new_value.to_ne_bytes();
-    locations
-        .into_iter()
-        .for_each(|addr| match process.write_memory(addr, &new_value) {
-            Ok(n) => eprintln!("Written {} bytes to [{:x}]", n, addr),
-            Err(e) => eprintln!("Failed to write to [{:x}]: {}", addr, e),
-        });
+    todo!("subsequent scans and rewriting memory");
 }
