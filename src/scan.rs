@@ -133,16 +133,26 @@ impl Region {
     fn iter_locations<'a>(
         &'a self,
         new_memory: &'a [u8],
-    ) -> impl Iterator<Item = (usize, i32, i32)> + 'a {
+    ) -> Box<dyn Iterator<Item = (usize, i32, i32)> + 'a> {
         match &self.locations {
-            CandidateLocations::Dense { range } => range.clone().step_by(4).map(move |addr| {
-                let old = self.value_at(addr);
-                let base = addr - self.info.BaseAddress as usize;
-                let bytes = &new_memory[base..base + 4];
-                let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                (addr, old, new)
-            }),
-            _ => todo!(),
+            CandidateLocations::Discrete { locations } => {
+                Box::new(locations.iter().map(move |&addr| {
+                    let old = self.value_at(addr);
+                    let base = addr - self.info.BaseAddress as usize;
+                    let bytes = &new_memory[base..base + 4];
+                    let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                    (addr, old, new)
+                }))
+            }
+            CandidateLocations::Dense { range } => {
+                Box::new(range.clone().step_by(4).map(move |addr| {
+                    let old = self.value_at(addr);
+                    let base = addr - self.info.BaseAddress as usize;
+                    let bytes = &new_memory[base..base + 4];
+                    let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                    (addr, old, new)
+                }))
+            }
         }
     }
 }
