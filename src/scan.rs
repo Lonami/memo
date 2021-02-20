@@ -11,6 +11,9 @@ pub enum Scan {
     /// The value is unknown.
     /// Every memory location is considered valid. This only makes sense for a first scan.
     Unknown,
+    /// The value has decreased by some unknown amount since the last scan.
+    /// This only makes sense for subsequent scans.
+    Decreased,
 }
 
 /// Candidate memory locations for holding our desired value.
@@ -66,7 +69,8 @@ impl Scan {
                     value: Value::Exact(*n),
                 }
             }
-            Scan::Unknown => Region {
+            // For scans that make no sense on a first run, treat them as unknown.
+            Scan::Unknown | Scan::Decreased => Region {
                 info,
                 locations: CandidateLocations::Dense {
                     range: base..base + info.RegionSize,

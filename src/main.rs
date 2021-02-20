@@ -198,6 +198,47 @@ impl Process {
             )
             .collect()
     }
+
+    pub fn rescan_regions(&self, regions: &[Region], scan: Scan) -> Vec<Region> {
+        regions
+            .iter()
+            .flat_map(|region| match scan {
+                Scan::Decreased => {
+                    let mut locations = Vec::new();
+                    match &region.locations {
+                        CandidateLocations::Dense { range } => {
+                            match self.read_memory(range.start, range.end - range.start) {
+                                Ok(memory) => match &region.value {
+                                    Value::AnyWithin(previous) => {
+                                        memory
+                                            .windows(4)
+                                            .zip(previous.windows(4))
+                                            .enumerate()
+                                            .step_by(4)
+                                            .for_each(|(offset, (new, old))| {
+                                                if new < old {
+                                                    locations.push(range.start + offset);
+                                                }
+                                            });
+
+                                        Some(Region {
+                                            info: region.info.clone(),
+                                            locations: CandidateLocations::Discrete { locations },
+                                            value: Value::AnyWithin(memory),
+                                        })
+                                    }
+                                    _ => todo!(),
+                                },
+                                _ => todo!(),
+                            }
+                        }
+                        _ => todo!(),
+                    }
+                }
+                _ => todo!(),
+            })
+            .collect()
+    }
 }
 
 impl Drop for Process {
@@ -257,6 +298,13 @@ fn main() {
     println!("Scanning {} memory regions", regions.len());
     let scan = ui::prompt_scan().unwrap();
     let last_scan = process.scan_regions(&regions, scan);
+    println!(
+        "Found {} locations",
+        last_scan.iter().map(|r| r.locations.len()).sum::<usize>()
+    );
+
+    let scan = ui::prompt_scan().unwrap();
+    let last_scan = process.rescan_regions(&last_scan, scan);
     println!(
         "Found {} locations",
         last_scan.iter().map(|r| r.locations.len()).sum::<usize>()

@@ -130,9 +130,11 @@ pub fn prompt_scan() -> Result<Scan, std::num::ParseIntError> {
                 println!("| Allowed prefixes:");
                 println!("|   (empty): exact value scan");
                 println!("|   u: unknown value");
+                println!("|   d: decreased value");
                 continue;
             }
             b'u' => Scan::Unknown,
+            b'd' => Scan::Decreased,
             _ => Scan::Exact(value.parse()?),
         });
     }
