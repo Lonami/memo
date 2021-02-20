@@ -184,51 +184,18 @@ impl Process {
     pub fn scan_regions(&self, regions: &[MEMORY_BASIC_INFORMATION], scan: Scan) -> Vec<Region> {
         regions
             .iter()
-            .flat_map(|region| match scan {
-                Scan::Exact(n) => {
-                    let target = n.to_ne_bytes();
-                    let mut locations = Vec::new();
-                    match self.read_memory(region.BaseAddress as _, region.RegionSize) {
-                        Ok(memory) => memory
-                            .windows(target.len())
-                            .enumerate()
-                            .step_by(4)
-                            .for_each(|(offset, window)| {
-                                if window == target {
-                                    locations.push(region.BaseAddress as usize + offset);
-                                }
-                            }),
-                        Err(err) => eprintln!(
+            .flat_map(
+                |region| match self.read_memory(region.BaseAddress as _, region.RegionSize) {
+                    Ok(memory) => Some(scan.run(region.clone(), memory)),
+                    Err(err) => {
+                        eprintln!(
                             "Failed to read {} bytes at {:?}: {}",
                             region.RegionSize, region.BaseAddress, err,
-                        ),
+                        );
+                        None
                     }
-                    Some(Region {
-                        info: region.clone(),
-                        locations: CandidateLocations::Discrete { locations },
-                        value: Value::Exact(n),
-                    })
-                }
-                Scan::Unknown => {
-                    let base = region.BaseAddress as usize;
-                    match self.read_memory(region.BaseAddress as _, region.RegionSize) {
-                        Ok(memory) => Some(Region {
-                            info: region.clone(),
-                            locations: CandidateLocations::Dense {
-                                range: base..base + region.RegionSize,
-                            },
-                            value: Value::AnyWithin(memory),
-                        }),
-                        Err(err) => {
-                            eprintln!(
-                                "Failed to read {} bytes at {:?}: {}",
-                                region.RegionSize, region.BaseAddress, err,
-                            );
-                            None
-                        }
-                    }
-                }
-            })
+                },
+            )
             .collect()
     }
 }

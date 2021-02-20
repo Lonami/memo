@@ -39,6 +39,44 @@ pub struct Region {
     pub value: Value,
 }
 
+impl Scan {
+    /// Run the scan over the memory corresponding to the given region information.
+    ///
+    /// Returns a scanned region with all the results found.
+    pub fn run(&self, info: MEMORY_BASIC_INFORMATION, memory: Vec<u8>) -> Region {
+        let base = info.BaseAddress as usize;
+        match self {
+            Scan::Exact(n) => {
+                let target = n.to_ne_bytes();
+                let locations = memory
+                    .windows(target.len())
+                    .enumerate()
+                    .step_by(4)
+                    .flat_map(|(offset, window)| {
+                        if window == target {
+                            Some(base + offset)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                Region {
+                    info,
+                    locations: CandidateLocations::Discrete { locations },
+                    value: Value::Exact(*n),
+                }
+            }
+            Scan::Unknown => Region {
+                info,
+                locations: CandidateLocations::Dense {
+                    range: base..base + info.RegionSize,
+                },
+                value: Value::AnyWithin(memory),
+            },
+        }
+    }
+}
+
 impl CandidateLocations {
     /// Return the amount of candidate locations.
     pub fn len(&self) -> usize {
