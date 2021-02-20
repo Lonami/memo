@@ -120,12 +120,20 @@ pub fn prompt_scan() -> Result<Scan, std::num::ParseIntError> {
         input.clear();
         stdin().read_line(&mut input).unwrap();
         let value = input.trim();
-        if value == "?" {
-            println!("= Scan interface =");
-            println!("| Allowed prefixes:");
-            println!("|   (empty): exact value scan");
-        } else {
-            break Ok(Scan::Exact(value.parse()?));
+        if value.is_empty() {
+            panic!("must provide a value");
         }
+
+        break Ok(match value.as_bytes()[0] {
+            b'?' => {
+                println!("= Scan interface =");
+                println!("| Allowed prefixes:");
+                println!("|   (empty): exact value scan");
+                println!("|   u: unknown value");
+                continue;
+            }
+            b'u' => Scan::Unknown,
+            _ => Scan::Exact(value.parse()?),
+        });
     }
 }
