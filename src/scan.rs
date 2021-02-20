@@ -17,6 +17,7 @@ pub enum Scan {
 }
 
 /// Candidate memory locations for holding our desired value.
+#[derive(Clone)]
 pub enum CandidateLocations {
     /// Multiple, separated locations.
     Discrete { locations: Vec<usize> },
@@ -25,6 +26,7 @@ pub enum CandidateLocations {
 }
 
 /// A value found in memory.
+#[derive(Clone)]
 pub enum Value {
     /// All the values exactly matched this at the time of the scan.
     Exact(i32),
@@ -33,6 +35,7 @@ pub enum Value {
 }
 
 /// A memory region.
+#[derive(Clone)]
 pub struct Region {
     /// The raw information about this memory region.
     pub info: MEMORY_BASIC_INFORMATION,
@@ -79,6 +82,28 @@ impl Scan {
             },
         }
     }
+
+    /// Re-run the scan over a previously-scanned memory region.
+    ///
+    /// Returns the new scanned region with all the results found.
+    pub fn rerun(&self, region: &Region, memory: Vec<u8>) -> Region {
+        match self {
+            // Exact scan does not care about any previous value.
+            Scan::Exact(_) => self.run(region.info.clone(), memory),
+            // Unknown scan won't narrow down the region at all.
+            Scan::Unknown => region.clone(),
+            Scan::Decreased => Region {
+                info: region.info.clone(),
+                locations: CandidateLocations::Discrete {
+                    locations: region
+                        .iter_locations(&memory)
+                        .flat_map(|(addr, old, new)| if new < old { Some(addr) } else { None })
+                        .collect(),
+                },
+                value: Value::AnyWithin(memory),
+            },
+        }
+    }
 }
 
 impl CandidateLocations {
@@ -87,6 +112,40 @@ impl CandidateLocations {
         match self {
             CandidateLocations::Discrete { locations } => locations.len(),
             CandidateLocations::Dense { range } => range.len(),
+        }
+    }
+}
+
+impl Region {
+    /// Return the value stored at `addr`.
+    fn value_at(&self, addr: usize) -> i32 {
+        match &self.value {
+            Value::AnyWithin(chunk) => {
+                let base = addr - self.info.BaseAddress as usize;
+                let bytes = &chunk[base..base + 4];
+                i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+            }
+            _ => todo!(),
+        }
+    }
+
+    /// Iterate over `(address, old value, new value)`.
+    fn iter_locations<'a>(
+        &'a self,
+        new_memory: &'a [u8],
+    ) -> impl Iterator<Item = (usize, i32, i32)> + 'a {
+        match &self.locations {
+            CandidateLocations::Dense { range } => range.clone().step_by(4).map(move |addr| {
+                let old = self.value_at(addr);
+                let new = i32::from_ne_bytes([
+                    new_memory[0],
+                    new_memory[1],
+                    new_memory[2],
+                    new_memory[3],
+                ]);
+                (addr, old, new)
+            }),
+            _ => todo!(),
         }
     }
 }

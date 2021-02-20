@@ -202,46 +202,17 @@ impl Process {
     pub fn rescan_regions(&self, regions: &[Region], scan: Scan) -> Vec<Region> {
         regions
             .iter()
-            .flat_map(|region| match scan {
-                Scan::Decreased => {
-                    let mut locations = Vec::new();
-                    match &region.locations {
-                        CandidateLocations::Dense { range } => {
-                            match self.read_memory(range.start, range.end - range.start) {
-                                Ok(memory) => match &region.value {
-                                    Value::AnyWithin(previous) => {
-                                        memory
-                                            .windows(4)
-                                            .zip(previous.windows(4))
-                                            .enumerate()
-                                            .step_by(4)
-                                            .for_each(|(offset, (new, old))| {
-                                                let new = i32::from_ne_bytes([
-                                                    new[0], new[1], new[2], new[3],
-                                                ]);
-                                                let old = i32::from_ne_bytes([
-                                                    old[0], old[1], old[2], old[3],
-                                                ]);
-                                                if new < old {
-                                                    locations.push(range.start + offset);
-                                                }
-                                            });
-
-                                        Some(Region {
-                                            info: region.info.clone(),
-                                            locations: CandidateLocations::Discrete { locations },
-                                            value: Value::AnyWithin(memory),
-                                        })
-                                    }
-                                    _ => todo!(),
-                                },
-                                _ => todo!(),
-                            }
-                        }
-                        _ => todo!(),
+            .flat_map(|region| {
+                match self.read_memory(region.info.BaseAddress as _, region.info.RegionSize) {
+                    Ok(memory) => Some(scan.rerun(region, memory)),
+                    Err(err) => {
+                        eprintln!(
+                            "Failed to read {} bytes at {:?}: {}",
+                            region.info.RegionSize, region.info.BaseAddress, err,
+                        );
+                        None
                     }
                 }
-                _ => todo!(),
             })
             .collect()
     }
