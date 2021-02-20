@@ -216,6 +216,12 @@ impl Process {
                                             .enumerate()
                                             .step_by(4)
                                             .for_each(|(offset, (new, old))| {
+                                                let new = i32::from_ne_bytes([
+                                                    new[0], new[1], new[2], new[3],
+                                                ]);
+                                                let old = i32::from_ne_bytes([
+                                                    old[0], old[1], old[2], old[3],
+                                                ]);
                                                 if new < old {
                                                     locations.push(range.start + offset);
                                                 }
