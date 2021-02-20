@@ -209,7 +209,25 @@ impl Process {
                         value: Value::Exact(n),
                     })
                 }
-                Scan::Unknown => todo!(),
+                Scan::Unknown => {
+                    let base = region.BaseAddress as usize;
+                    match self.read_memory(region.BaseAddress as _, region.RegionSize) {
+                        Ok(memory) => Some(Region {
+                            info: region.clone(),
+                            locations: CandidateLocations::Dense {
+                                range: base..base + region.RegionSize,
+                            },
+                            value: Value::AnyWithin(memory),
+                        }),
+                        Err(err) => {
+                            eprintln!(
+                                "Failed to read {} bytes at {:?}: {}",
+                                region.RegionSize, region.BaseAddress, err,
+                            );
+                            None
+                        }
+                    }
+                }
             })
             .collect()
     }
