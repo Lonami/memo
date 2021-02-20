@@ -274,18 +274,23 @@ fn main() {
 
     println!("Scanning {} memory regions", regions.len());
     let scan = ui::prompt_scan().unwrap();
-    let last_scan = process.scan_regions(&regions, scan);
+    let mut last_scan = process.scan_regions(&regions, scan);
     println!(
         "Found {} locations",
         last_scan.iter().map(|r| r.locations.len()).sum::<usize>()
     );
 
-    let scan = ui::prompt_scan().unwrap();
-    let last_scan = process.rescan_regions(&last_scan, scan);
-    println!(
-        "Found {} locations",
-        last_scan.iter().map(|r| r.locations.len()).sum::<usize>()
-    );
+    while last_scan.iter().map(|r| r.locations.len()).sum::<usize>() != 1 {
+        let scan = match ui::prompt_scan() {
+            Ok(scan) => scan,
+            Err(_) => break,
+        };
+        last_scan = process.rescan_regions(&last_scan, scan);
+        println!(
+            "Now have {} locations",
+            last_scan.iter().map(|r| r.locations.len()).sum::<usize>()
+        );
+    }
 
-    todo!("subsequent scans and rewriting memory");
+    todo!("rewriting memory");
 }
