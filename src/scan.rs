@@ -137,12 +137,9 @@ impl Region {
         match &self.locations {
             CandidateLocations::Dense { range } => range.clone().step_by(4).map(move |addr| {
                 let old = self.value_at(addr);
-                let new = i32::from_ne_bytes([
-                    new_memory[0],
-                    new_memory[1],
-                    new_memory[2],
-                    new_memory[3],
-                ]);
+                let base = addr - self.info.BaseAddress as usize;
+                let bytes = &new_memory[base..base + 4];
+                let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
                 (addr, old, new)
             }),
             _ => todo!(),
