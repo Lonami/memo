@@ -1,4 +1,7 @@
+mod scan;
 mod ui;
+
+pub use scan::Scan;
 
 use std::fmt;
 use std::io;
@@ -233,7 +236,7 @@ fn main() {
         .collect::<Vec<_>>();
 
     println!("Scanning {} memory regions", regions.len());
-    let target = ui::prompt::<i32>("Which exact value to scan for?: ").unwrap();
+    let Scan::Exact(target) = ui::prompt_scan().unwrap();
     let target = target.to_ne_bytes();
     let mut locations = Vec::with_capacity(regions.len());
     regions.into_iter().for_each(|region| {
@@ -256,8 +259,8 @@ fn main() {
     println!("Found {} locations", locations.len());
 
     while locations.len() != 1 {
-        let target = match ui::prompt::<i32>("Which exact value to scan for next?: ") {
-            Ok(n) => n,
+        let target = match ui::prompt_scan() {
+            Ok(Scan::Exact(n)) => n,
             Err(_) => break,
         };
         let target = target.to_ne_bytes();

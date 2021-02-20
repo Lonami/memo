@@ -1,3 +1,4 @@
+use crate::Scan;
 use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::io::{stdin, stdout, Write};
@@ -104,4 +105,27 @@ pub fn list_picker<T: Display>(items: &[T]) -> &T {
     };
 
     &items[*picked[index].1]
+}
+
+/// Prompt the user to perform a scan.
+pub fn prompt_scan() -> Result<Scan, std::num::ParseIntError> {
+    let mut input = String::new();
+    loop {
+        {
+            let stdout = stdout();
+            let mut stdout = stdout.lock();
+            stdout.write_all("scan (? for help)> ".as_bytes()).unwrap();
+            stdout.flush().unwrap();
+        }
+        input.clear();
+        stdin().read_line(&mut input).unwrap();
+        let value = input.trim();
+        if value == "?" {
+            println!("= Scan interface =");
+            println!("| Allowed prefixes:");
+            println!("|   (empty): exact value scan");
+        } else {
+            break Ok(Scan::Exact(value.parse()?));
+        }
+    }
 }
