@@ -1,4 +1,5 @@
 use std::ops::Range;
+use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
 
 /// A scan type.
 ///
@@ -30,13 +31,16 @@ pub enum Value {
 
 /// A memory region.
 pub struct Region {
-    ///
-    pub info: winapi::um::winnt::MEMORY_BASIC_INFORMATION,
+    /// The raw information about this memory region.
+    pub info: MEMORY_BASIC_INFORMATION,
+    /// Candidate locations that should be considered during subsequent scans.
     pub locations: CandidateLocations,
+    /// The value (or value range) to compare against during subsequent scans.
     pub value: Value,
 }
 
 impl CandidateLocations {
+    /// Return the amount of candidate locations.
     pub fn len(&self) -> usize {
         match self {
             CandidateLocations::Discrete { locations } => locations.len(),
