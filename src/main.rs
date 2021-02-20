@@ -184,7 +184,7 @@ impl Process {
     pub fn scan_regions(&self, regions: &[MEMORY_BASIC_INFORMATION], scan: Scan) -> Vec<Region> {
         regions
             .iter()
-            .map(|region| match scan {
+            .flat_map(|region| match scan {
                 Scan::Exact(n) => {
                     let target = n.to_ne_bytes();
                     let mut locations = Vec::new();
@@ -203,11 +203,11 @@ impl Process {
                             region.RegionSize, region.BaseAddress, err,
                         ),
                     }
-                    Region {
+                    Some(Region {
                         info: region.clone(),
                         locations: CandidateLocations::Discrete { locations },
                         value: Value::Exact(n),
-                    }
+                    })
                 }
                 Scan::Unknown => todo!(),
             })
