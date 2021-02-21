@@ -266,7 +266,7 @@ impl CandidateLocations {
     }
 
     /// Return a iterator over the locations.
-    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = usize> + 'a> {
+    pub fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = usize> + 'a> {
         match self {
             CandidateLocations::Discrete { locations } => Box::new(locations.iter().copied()),
             CandidateLocations::SmallDiscrete { base, offsets } => {

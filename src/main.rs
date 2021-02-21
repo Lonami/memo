@@ -78,17 +78,12 @@ fn main() {
 
     let new_value = ui::prompt::<i32>("Enter new memory value: ").unwrap();
     let new_value = new_value.to_ne_bytes();
-    last_scan
-        .into_iter()
-        .for_each(|region| match region.locations {
-            scan::CandidateLocations::Discrete { locations } => {
-                locations.into_iter().for_each(|addr| {
-                    match process.write_memory(addr, &new_value) {
-                        Ok(n) => eprintln!("Written {} bytes to [{:x}]", n, addr),
-                        Err(e) => eprintln!("Failed to write to [{:x}]: {}", addr, e),
-                    };
-                });
-            }
-            _ => panic!("Should not have non-discrete locations by now"),
-        });
+    last_scan.into_iter().for_each(|region| {
+        region.locations.iter().for_each(|addr| {
+            match process.write_memory(addr, &new_value) {
+                Ok(n) => eprintln!("Written {} bytes to [{:x}]", n, addr),
+                Err(e) => eprintln!("Failed to write to [{:x}]: {}", addr, e),
+            };
+        })
+    });
 }
