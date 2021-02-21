@@ -122,58 +122,19 @@ pub fn prompt_scan() -> Result<Scan, std::num::ParseIntError> {
         let value = input.trim();
         if value.is_empty() {
             panic!("must provide a value");
+        } else if value == "?" {
+            println!("= Scan interface =");
+            println!("| Allowed prefixes:");
+            println!("|   (empty): exact value scan");
+            println!("|   u: unknown value");
+            println!("|   =: unchanged value");
+            println!("|   ~: changed value");
+            println!("|   d: decreased value");
+            println!("|   i: increased value");
+            println!("|");
+            println!("| Scan for range with no prefix LOW..HIGH (or inclusive ..=)");
+        } else {
+            break value.parse();
         }
-
-        break Ok(match value.as_bytes()[0] {
-            b'?' => {
-                println!("= Scan interface =");
-                println!("| Allowed prefixes:");
-                println!("|   (empty): exact value scan");
-                println!("|   u: unknown value");
-                println!("|   =: unchanged value");
-                println!("|   ~: changed value");
-                println!("|   d: decreased value");
-                println!("|   i: increased value");
-                println!("|");
-                println!("| Scan for range with no prefix LOW..HIGH (or inclusive ..=)");
-                continue;
-            }
-            b'u' => Scan::Unknown,
-            b'=' => Scan::Unchanged,
-            b'~' => Scan::Changed,
-            t @ b'd' | t @ b'i' => {
-                let n = value[1..].trim();
-                if n.is_empty() {
-                    if t == b'd' {
-                        Scan::Decreased
-                    } else {
-                        Scan::Increased
-                    }
-                } else {
-                    let n = n.parse()?;
-                    if t == b'd' {
-                        Scan::DecreasedBy(n)
-                    } else {
-                        Scan::IncreasedBy(n)
-                    }
-                }
-            }
-            _ => {
-                let (low, high) = if let Some(i) = value.find("..=") {
-                    (value[..i].parse()?, value[i + 3..].parse::<i32>()? - 1)
-                } else if let Some(i) = value.find("..") {
-                    (value[..i].parse()?, value[i + 3..].parse()?)
-                } else {
-                    let n = value.parse()?;
-                    (n, n)
-                };
-
-                if low == high {
-                    Scan::Exact(low)
-                } else {
-                    Scan::InRange(low, high)
-                }
-            }
-        });
     }
 }

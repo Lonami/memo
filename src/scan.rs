@@ -1,6 +1,7 @@
 use std::convert::TryInto;
 use std::mem;
 use std::ops::Range;
+use std::str::FromStr;
 use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
 
 /// A scan type.
@@ -194,6 +195,51 @@ impl Scan {
             Scan::DecreasedBy(n) => old.wrapping_sub(new) == n,
             Scan::IncreasedBy(n) => new.wrapping_sub(old) == n,
         }
+    }
+}
+
+impl FromStr for Scan {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(match value.as_bytes()[0] {
+            b'u' => Scan::Unknown,
+            b'=' => Scan::Unchanged,
+            b'~' => Scan::Changed,
+            t @ b'd' | t @ b'i' => {
+                let n = value[1..].trim();
+                if n.is_empty() {
+                    if t == b'd' {
+                        Scan::Decreased
+                    } else {
+                        Scan::Increased
+                    }
+                } else {
+                    let n = n.parse()?;
+                    if t == b'd' {
+                        Scan::DecreasedBy(n)
+                    } else {
+                        Scan::IncreasedBy(n)
+                    }
+                }
+            }
+            _ => {
+                let (low, high) = if let Some(i) = value.find("..=") {
+                    (value[..i].parse()?, value[i + 3..].parse::<i32>()? - 1)
+                } else if let Some(i) = value.find("..") {
+                    (value[..i].parse()?, value[i + 3..].parse()?)
+                } else {
+                    let n = value.parse()?;
+                    (n, n)
+                };
+
+                if low == high {
+                    Scan::Exact(low)
+                } else {
+                    Scan::InRange(low, high)
+                }
+            }
+        })
     }
 }
 
