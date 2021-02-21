@@ -254,6 +254,23 @@ impl CandidateLocations {
         // Revert to using a discrete representation.
         *self = CandidateLocations::Discrete { locations };
     }
+
+    /// Return a iterator over the locations.
+    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = usize> + 'a> {
+        match self {
+            CandidateLocations::Discrete { locations } => Box::new(locations.iter().copied()),
+            CandidateLocations::SmallDiscrete { base, offsets } => {
+                Box::new(offsets.iter().map(move |&offset| base + offset as usize))
+            }
+            CandidateLocations::Dense { range } => Box::new(range.clone().step_by(4)),
+            CandidateLocations::Sparse { base, mask } => Box::new(
+                mask.iter()
+                    .enumerate()
+                    .filter(|(_, &set)| set)
+                    .map(move |(i, _)| base + i * 4),
+            ),
+        }
+    }
 }
 
 impl Region {
@@ -273,50 +290,14 @@ impl Region {
     fn iter_locations<'a>(
         &'a self,
         new_memory: &'a [u8],
-    ) -> Box<dyn Iterator<Item = (usize, i32, i32)> + 'a> {
-        match &self.locations {
-            CandidateLocations::Discrete { locations } => {
-                Box::new(locations.iter().map(move |&addr| {
-                    let old = self.value_at(addr);
-                    let base = addr - self.info.BaseAddress as usize;
-                    let bytes = &new_memory[base..base + 4];
-                    let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                    (addr, old, new)
-                }))
-            }
-            CandidateLocations::SmallDiscrete { base, offsets } => {
-                Box::new(offsets.iter().map(move |&offset| {
-                    let addr = base + offset as usize;
-                    let old = self.value_at(addr);
-                    let base = addr - self.info.BaseAddress as usize;
-                    let bytes = &new_memory[base..base + 4];
-                    let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                    (addr, old, new)
-                }))
-            }
-            CandidateLocations::Dense { range } => {
-                Box::new(range.clone().step_by(4).map(move |addr| {
-                    let old = self.value_at(addr);
-                    let base = addr - self.info.BaseAddress as usize;
-                    let bytes = &new_memory[base..base + 4];
-                    let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                    (addr, old, new)
-                }))
-            }
-            CandidateLocations::Sparse { base, mask } => Box::new(
-                mask.iter()
-                    .enumerate()
-                    .filter(|(_, &set)| set)
-                    .map(move |(i, _)| {
-                        let addr = base + i * 4;
-                        let old = self.value_at(addr);
-                        let base = addr - self.info.BaseAddress as usize;
-                        let bytes = &new_memory[base..base + 4];
-                        let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                        (addr, old, new)
-                    }),
-            ),
-        }
+    ) -> impl Iterator<Item = (usize, i32, i32)> + 'a {
+        self.locations.iter().map(move |addr| {
+            let old = self.value_at(addr);
+            let base = addr - self.info.BaseAddress as usize;
+            let bytes = &new_memory[base..base + 4];
+            let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            (addr, old, new)
+        })
     }
 }
 
