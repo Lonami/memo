@@ -376,4 +376,50 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn iter_discrete() {
+        let locations = CandidateLocations::Discrete {
+            locations: vec![0x2000, 0x2004, 0x200c],
+        };
+        assert_eq!(
+            locations.iter().collect::<Vec<_>>(),
+            vec![0x2000, 0x2004, 0x200c]
+        );
+    }
+
+    #[test]
+    fn iter_small_discrete() {
+        let locations = CandidateLocations::SmallDiscrete {
+            base: 0x2000,
+            offsets: vec![0x0000, 0x0004, 0x000c],
+        };
+        assert_eq!(
+            locations.iter().collect::<Vec<_>>(),
+            vec![0x2000, 0x2004, 0x200c]
+        );
+    }
+
+    #[test]
+    fn iter_dense() {
+        let locations = CandidateLocations::Dense {
+            range: 0x2000..0x2010,
+        };
+        assert_eq!(
+            locations.iter().collect::<Vec<_>>(),
+            vec![0x2000, 0x2004, 0x2008, 0x200c]
+        );
+    }
+
+    #[test]
+    fn iter_sparse() {
+        let locations = CandidateLocations::Sparse {
+            base: 0x2000,
+            mask: vec![true, true, false, true],
+        };
+        assert_eq!(
+            locations.iter().collect::<Vec<_>>(),
+            vec![0x2000, 0x2004, 0x200c]
+        );
+    }
 }
