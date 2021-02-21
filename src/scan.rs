@@ -225,9 +225,9 @@ impl FromStr for Scan {
             }
             _ => {
                 let (low, high) = if let Some(i) = value.find("..=") {
-                    (value[..i].parse()?, value[i + 3..].parse::<i32>()? - 1)
-                } else if let Some(i) = value.find("..") {
                     (value[..i].parse()?, value[i + 3..].parse()?)
+                } else if let Some(i) = value.find("..") {
+                    (value[..i].parse()?, value[i + 2..].parse::<i32>()? - 1)
                 } else {
                     let n = value.parse()?;
                     (n, n)
