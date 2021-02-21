@@ -1,10 +1,10 @@
-use std::ops::{Range, RangeInclusive};
+use std::ops::Range;
 use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
 
 /// A scan type.
 ///
 /// The variant determines how a memory scan should be performed.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Scan {
     /// Perform an exact memory scan.
     /// Only memory locations containing this exact value will be considered.
@@ -13,7 +13,7 @@ pub enum Scan {
     /// Every memory location is considered valid. This only makes sense for a first scan.
     Unknown,
     /// The value is contained within a given range.
-    InRange(RangeInclusive<i32>),
+    InRange(i32, i32),
     /// The value has not changed since the last scan.
     /// This only makes sense for subsequent scans.
     Unchanged,
@@ -69,7 +69,7 @@ impl Scan {
     /// Returns a scanned region with all the results found.
     pub fn run(&self, info: MEMORY_BASIC_INFORMATION, memory: Vec<u8>) -> Region {
         let base = info.BaseAddress as usize;
-        match self {
+        match *self {
             Scan::Exact(n) => {
                 let target = n.to_ne_bytes();
                 let locations = memory
@@ -87,17 +87,17 @@ impl Scan {
                 Region {
                     info,
                     locations: CandidateLocations::Discrete { locations },
-                    value: Value::Exact(*n),
+                    value: Value::Exact(n),
                 }
             }
-            Scan::InRange(range) => {
+            Scan::InRange(low, high) => {
                 let locations = memory
                     .windows(4)
                     .enumerate()
                     .step_by(4)
                     .flat_map(|(offset, window)| {
                         let n = i32::from_ne_bytes([window[0], window[1], window[2], window[3]]);
-                        if range.contains(&n) {
+                        if low <= n && n <= high {
                             Some(base + offset)
                         } else {
                             None
@@ -163,10 +163,10 @@ impl Scan {
     /// assert!(scan.acceptable(5, 7));
     /// ```
     fn acceptable(&self, old: i32, new: i32) -> bool {
-        match self.clone() {
+        match *self {
             Scan::Exact(n) => new == n,
             Scan::Unknown => true,
-            Scan::InRange(range) => range.contains(&new),
+            Scan::InRange(low, high) => low <= new && new <= high,
             Scan::Unchanged => new == old,
             Scan::Changed => new != old,
             Scan::Decreased => new < old,
