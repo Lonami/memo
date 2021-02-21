@@ -150,7 +150,7 @@ pub fn prompt_scan() -> Result<Scan, std::num::ParseIntError> {
                         Scan::Increased
                     }
                 } else {
-                    let n = value.parse()?;
+                    let n = n.parse()?;
                     if t == b'd' {
                         Scan::DecreasedBy(n)
                     } else {
@@ -159,9 +159,9 @@ pub fn prompt_scan() -> Result<Scan, std::num::ParseIntError> {
                 }
             }
             _ => {
-                let (low, high) = if let Some(i) = value.find("..") {
-                    (value[..i].parse()?, value[i + 2..].parse::<i32>()? - 1)
-                } else if let Some(i) = value.find("..=") {
+                let (low, high) = if let Some(i) = value.find("..=") {
+                    (value[..i].parse()?, value[i + 3..].parse::<i32>()? - 1)
+                } else if let Some(i) = value.find("..") {
                     (value[..i].parse()?, value[i + 3..].parse()?)
                 } else {
                     let n = value.parse()?;
