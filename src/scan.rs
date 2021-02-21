@@ -148,8 +148,13 @@ impl Scan {
                 info: region.info.clone(),
                 locations: CandidateLocations::Discrete {
                     locations: region
-                        .iter_locations(&memory)
-                        .flat_map(|(addr, old, new)| {
+                        .locations
+                        .iter()
+                        .flat_map(|addr| {
+                            let old = region.value_at(addr);
+                            let base = addr - region.info.BaseAddress as usize;
+                            let bytes = &memory[base..base + 4];
+                            let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
                             if self.acceptable(old, new) {
                                 Some(addr)
                             } else {
@@ -284,20 +289,6 @@ impl Region {
             }
             _ => todo!(),
         }
-    }
-
-    /// Iterate over `(address, old value, new value)`.
-    fn iter_locations<'a>(
-        &'a self,
-        new_memory: &'a [u8],
-    ) -> impl Iterator<Item = (usize, i32, i32)> + 'a {
-        self.locations.iter().map(move |addr| {
-            let old = self.value_at(addr);
-            let base = addr - self.info.BaseAddress as usize;
-            let bytes = &new_memory[base..base + 4];
-            let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-            (addr, old, new)
-        })
     }
 }
 
