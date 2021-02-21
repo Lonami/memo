@@ -37,7 +37,7 @@ pub enum Scan {
 }
 
 /// Candidate memory locations for holding our desired value.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CandidateLocations {
     /// Multiple, separated locations.
     ///
@@ -213,8 +213,8 @@ impl CandidateLocations {
         let size = high - low;
 
         // Can the entire region be represented with a base and 16-bit offsets?
-        // And is it more worth than using a single byte per location?
-        if size <= u16::MAX as _ && locations.len() * mem::size_of::<u16>() < size {
+        // And is it more worth than using a single byte per 4-byte aligned location?
+        if size <= u16::MAX as _ && locations.len() * mem::size_of::<u16>() < size / 4 {
             // We will always store a `0` offset, but that's fine, it makes iteration easier and
             // getting rid of it would only gain usu 2 bytes.
             *self = CandidateLocations::SmallDiscrete {
@@ -317,5 +317,86 @@ impl Region {
                     }),
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_uncompactable() {
+        // Dense
+        let mut locations = CandidateLocations::Dense {
+            range: 0x2000..0x2100,
+        };
+        locations.try_compact();
+        assert!(matches!(locations, CandidateLocations::Dense { .. }));
+
+        // Already compacted
+        let mut locations = CandidateLocations::SmallDiscrete {
+            base: 0x2000,
+            offsets: vec![0, 0x20, 0x40],
+        };
+        locations.try_compact();
+        assert!(matches!(locations, CandidateLocations::SmallDiscrete { .. }));
+
+        let mut locations = CandidateLocations::Sparse {
+            base: 0x2000,
+            mask: vec![true, false, false, false],
+        };
+        locations.try_compact();
+        assert!(matches!(locations, CandidateLocations::Sparse { .. }));
+    }
+
+    #[test]
+    fn compact_not_worth() {
+        // Too small
+        let mut locations = CandidateLocations::Discrete {
+            locations: vec![0x2000],
+        };
+        let original = locations.clone();
+        locations.try_compact();
+        assert_eq!(locations, original);
+
+        // Too sparse and too large to fit in `SmallDiscrete`.
+        let mut locations = CandidateLocations::Discrete {
+            locations: vec![0x2000, 0x42000],
+        };
+        let original = locations.clone();
+        locations.try_compact();
+        assert_eq!(locations, original);
+    }
+
+    #[test]
+    fn compact_small_discrete() {
+        let mut locations = CandidateLocations::Discrete {
+            locations: vec![0x2000, 0x2004, 0x2040],
+        };
+        locations.try_compact();
+        assert_eq!(
+            locations,
+            CandidateLocations::SmallDiscrete {
+                base: 0x2000,
+                offsets: vec![0x0000, 0x0004, 0x0040],
+            }
+        );
+    }
+
+    #[test]
+    fn compact_sparse() {
+        let mut locations = CandidateLocations::Discrete {
+            locations: vec![
+                0x2000, 0x2004, 0x200c, 0x2010, 0x2014, 0x2018, 0x201c, 0x2020,
+            ],
+        };
+        locations.try_compact();
+        assert_eq!(
+            locations,
+            CandidateLocations::Sparse {
+                base: 0x2000,
+                mask: vec![true, true, false, true, true, true, true, true],
+            }
+        );
     }
 }
