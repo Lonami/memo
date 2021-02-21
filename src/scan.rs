@@ -144,9 +144,8 @@ impl Scan {
         match self {
             // Optimization: unknown scan won't narrow down the region at all.
             Scan::Unknown => region.clone(),
-            _ => Region {
-                info: region.info.clone(),
-                locations: CandidateLocations::Discrete {
+            _ => {
+                let mut locations = CandidateLocations::Discrete {
                     locations: region
                         .locations
                         .iter()
@@ -162,9 +161,15 @@ impl Scan {
                             }
                         })
                         .collect(),
-                },
-                value: Value::AnyWithin(memory),
-            },
+                };
+                locations.try_compact();
+
+                Region {
+                    info: region.info.clone(),
+                    locations,
+                    value: Value::AnyWithin(memory),
+                }
+            }
         }
     }
 
