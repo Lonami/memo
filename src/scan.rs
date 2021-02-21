@@ -4,6 +4,7 @@ use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
 /// A scan type.
 ///
 /// The variant determines how a memory scan should be performed.
+#[derive(Clone, Debug)]
 pub enum Scan {
     /// Perform an exact memory scan.
     /// Only memory locations containing this exact value will be considered.
@@ -131,57 +132,15 @@ impl Scan {
     /// Returns the new scanned region with all the results found.
     pub fn rerun(&self, region: &Region, memory: Vec<u8>) -> Region {
         match self {
-            // Exact or in range scan does not care about any previous value.
-            Scan::Exact(_) | Scan::InRange(_) => self.run(region.info.clone(), memory),
-            // Unknown scan won't narrow down the region at all.
+            // Optimization: unknown scan won't narrow down the region at all.
             Scan::Unknown => region.clone(),
-            Scan::Unchanged => Region {
-                info: region.info.clone(),
-                locations: CandidateLocations::Discrete {
-                    locations: region
-                        .iter_locations(&memory)
-                        .flat_map(|(addr, old, new)| if new == old { Some(addr) } else { None })
-                        .collect(),
-                },
-                value: Value::AnyWithin(memory),
-            },
-            Scan::Changed => Region {
-                info: region.info.clone(),
-                locations: CandidateLocations::Discrete {
-                    locations: region
-                        .iter_locations(&memory)
-                        .flat_map(|(addr, old, new)| if new != old { Some(addr) } else { None })
-                        .collect(),
-                },
-                value: Value::AnyWithin(memory),
-            },
-            Scan::Decreased => Region {
-                info: region.info.clone(),
-                locations: CandidateLocations::Discrete {
-                    locations: region
-                        .iter_locations(&memory)
-                        .flat_map(|(addr, old, new)| if new < old { Some(addr) } else { None })
-                        .collect(),
-                },
-                value: Value::AnyWithin(memory),
-            },
-            Scan::Increased => Region {
-                info: region.info.clone(),
-                locations: CandidateLocations::Discrete {
-                    locations: region
-                        .iter_locations(&memory)
-                        .flat_map(|(addr, old, new)| if new > old { Some(addr) } else { None })
-                        .collect(),
-                },
-                value: Value::AnyWithin(memory),
-            },
-            Scan::DecreasedBy(n) => Region {
+            _ => Region {
                 info: region.info.clone(),
                 locations: CandidateLocations::Discrete {
                     locations: region
                         .iter_locations(&memory)
                         .flat_map(|(addr, old, new)| {
-                            if old.wrapping_sub(new) == *n {
+                            if self.acceptable(old, new) {
                                 Some(addr)
                             } else {
                                 None
@@ -191,22 +150,29 @@ impl Scan {
                 },
                 value: Value::AnyWithin(memory),
             },
-            Scan::IncreasedBy(n) => Region {
-                info: region.info.clone(),
-                locations: CandidateLocations::Discrete {
-                    locations: region
-                        .iter_locations(&memory)
-                        .flat_map(|(addr, old, new)| {
-                            if new.wrapping_sub(old) == *n {
-                                Some(addr)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
-                },
-                value: Value::AnyWithin(memory),
-            },
+        }
+    }
+
+    /// Check if the change from the given `old` value to the `new` value is acceptable according
+    /// to the current scan type.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let scan = Scan::Increased;
+    /// assert!(scan.acceptable(5, 7));
+    /// ```
+    fn acceptable(&self, old: i32, new: i32) -> bool {
+        match self.clone() {
+            Scan::Exact(n) => new == n,
+            Scan::Unknown => true,
+            Scan::InRange(range) => range.contains(&new),
+            Scan::Unchanged => new == old,
+            Scan::Changed => new != old,
+            Scan::Decreased => new < old,
+            Scan::Increased => new > old,
+            Scan::DecreasedBy(n) => old.wrapping_sub(new) == n,
+            Scan::IncreasedBy(n) => new.wrapping_sub(old) == n,
         }
     }
 }
