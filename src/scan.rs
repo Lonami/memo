@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::ops::{Range, RangeInclusive};
 use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
 
 /// A scan type.
@@ -11,9 +11,26 @@ pub enum Scan {
     /// The value is unknown.
     /// Every memory location is considered valid. This only makes sense for a first scan.
     Unknown,
+    /// The value is contained within a given range.
+    InRange(RangeInclusive<i32>),
+    /// The value has not changed since the last scan.
+    /// This only makes sense for subsequent scans.
+    Unchanged,
+    /// The value has changed since the last scan.
+    /// This only makes sense for subsequent scans.
+    Changed,
     /// The value has decreased by some unknown amount since the last scan.
     /// This only makes sense for subsequent scans.
     Decreased,
+    /// The value has increased by some unknown amount since the last scan.
+    /// This only makes sense for subsequent scans.
+    Increased,
+    /// The value has decreased by the given amount since the last scan.
+    /// This only makes sense for subsequent scans.
+    DecreasedBy(i32),
+    /// The value has increased by the given amount since the last scan.
+    /// This only makes sense for subsequent scans.
+    IncreasedBy(i32),
 }
 
 /// Candidate memory locations for holding our desired value.
@@ -72,8 +89,34 @@ impl Scan {
                     value: Value::Exact(*n),
                 }
             }
+            Scan::InRange(range) => {
+                let locations = memory
+                    .windows(4)
+                    .enumerate()
+                    .step_by(4)
+                    .flat_map(|(offset, window)| {
+                        let n = i32::from_ne_bytes([window[0], window[1], window[2], window[3]]);
+                        if range.contains(&n) {
+                            Some(base + offset)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                Region {
+                    info,
+                    locations: CandidateLocations::Discrete { locations },
+                    value: Value::AnyWithin(memory),
+                }
+            }
             // For scans that make no sense on a first run, treat them as unknown.
-            Scan::Unknown | Scan::Decreased => Region {
+            Scan::Unknown
+            | Scan::Unchanged
+            | Scan::Changed
+            | Scan::Decreased
+            | Scan::Increased
+            | Scan::DecreasedBy(_)
+            | Scan::IncreasedBy(_) => Region {
                 info,
                 locations: CandidateLocations::Dense {
                     range: base..base + info.RegionSize,
@@ -88,16 +131,78 @@ impl Scan {
     /// Returns the new scanned region with all the results found.
     pub fn rerun(&self, region: &Region, memory: Vec<u8>) -> Region {
         match self {
-            // Exact scan does not care about any previous value.
-            Scan::Exact(_) => self.run(region.info.clone(), memory),
+            // Exact or in range scan does not care about any previous value.
+            Scan::Exact(_) | Scan::InRange(_) => self.run(region.info.clone(), memory),
             // Unknown scan won't narrow down the region at all.
             Scan::Unknown => region.clone(),
+            Scan::Unchanged => Region {
+                info: region.info.clone(),
+                locations: CandidateLocations::Discrete {
+                    locations: region
+                        .iter_locations(&memory)
+                        .flat_map(|(addr, old, new)| if new == old { Some(addr) } else { None })
+                        .collect(),
+                },
+                value: Value::AnyWithin(memory),
+            },
+            Scan::Changed => Region {
+                info: region.info.clone(),
+                locations: CandidateLocations::Discrete {
+                    locations: region
+                        .iter_locations(&memory)
+                        .flat_map(|(addr, old, new)| if new != old { Some(addr) } else { None })
+                        .collect(),
+                },
+                value: Value::AnyWithin(memory),
+            },
             Scan::Decreased => Region {
                 info: region.info.clone(),
                 locations: CandidateLocations::Discrete {
                     locations: region
                         .iter_locations(&memory)
                         .flat_map(|(addr, old, new)| if new < old { Some(addr) } else { None })
+                        .collect(),
+                },
+                value: Value::AnyWithin(memory),
+            },
+            Scan::Increased => Region {
+                info: region.info.clone(),
+                locations: CandidateLocations::Discrete {
+                    locations: region
+                        .iter_locations(&memory)
+                        .flat_map(|(addr, old, new)| if new > old { Some(addr) } else { None })
+                        .collect(),
+                },
+                value: Value::AnyWithin(memory),
+            },
+            Scan::DecreasedBy(n) => Region {
+                info: region.info.clone(),
+                locations: CandidateLocations::Discrete {
+                    locations: region
+                        .iter_locations(&memory)
+                        .flat_map(|(addr, old, new)| {
+                            if old.wrapping_sub(new) == *n {
+                                Some(addr)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                },
+                value: Value::AnyWithin(memory),
+            },
+            Scan::IncreasedBy(n) => Region {
+                info: region.info.clone(),
+                locations: CandidateLocations::Discrete {
+                    locations: region
+                        .iter_locations(&memory)
+                        .flat_map(|(addr, old, new)| {
+                            if new.wrapping_sub(old) == *n {
+                                Some(addr)
+                            } else {
+                                None
+                            }
+                        })
                         .collect(),
                 },
                 value: Value::AnyWithin(memory),
