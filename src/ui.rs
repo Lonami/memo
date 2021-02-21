@@ -1,4 +1,4 @@
-use crate::Scan;
+use crate::scan::Scan;
 use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::io::{stdin, stdout, Write};
