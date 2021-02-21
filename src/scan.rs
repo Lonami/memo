@@ -1,3 +1,5 @@
+use std::convert::TryInto;
+use std::mem;
 use std::ops::Range;
 use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
 
@@ -38,9 +40,17 @@ pub enum Scan {
 #[derive(Clone)]
 pub enum CandidateLocations {
     /// Multiple, separated locations.
-    Discrete { locations: Vec<usize> },
     ///
+    /// It is a logic error to have the locations in non-ascending order.
+    Discrete { locations: Vec<usize> },
+    /// Like `Discrete`, but uses less memory.
+    // TODO this could also assume 4-byte aligned so we'd gain 2 bits for offsets.
+    SmallDiscrete { base: usize, offsets: Vec<u16> },
+    /// A dense memory location. Everything within here should be considered.
     Dense { range: Range<usize> },
+    /// A sparse memory location. Pretty much like `Dense`, but only items within the mask apply.
+    /// The mask assumes 4-byte aligned data  (so one byte for every 4).
+    Sparse { base: usize, mask: Vec<bool> },
 }
 
 /// A value found in memory.
@@ -182,7 +192,9 @@ impl CandidateLocations {
     pub fn len(&self) -> usize {
         match self {
             CandidateLocations::Discrete { locations } => locations.len(),
+            CandidateLocations::SmallDiscrete { offsets, .. } => offsets.len(),
             CandidateLocations::Dense { range } => range.len(),
+            CandidateLocations::Sparse { mask, .. } => mask.iter().filter(|x| **x).count(),
         }
     }
 }
@@ -215,6 +227,16 @@ impl Region {
                     (addr, old, new)
                 }))
             }
+            CandidateLocations::SmallDiscrete { base, offsets } => {
+                Box::new(offsets.iter().map(move |&offset| {
+                    let addr = base + offset as usize;
+                    let old = self.value_at(addr);
+                    let base = addr - self.info.BaseAddress as usize;
+                    let bytes = &new_memory[base..base + 4];
+                    let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                    (addr, old, new)
+                }))
+            }
             CandidateLocations::Dense { range } => {
                 Box::new(range.clone().step_by(4).map(move |addr| {
                     let old = self.value_at(addr);
@@ -224,6 +246,19 @@ impl Region {
                     (addr, old, new)
                 }))
             }
+            CandidateLocations::Sparse { base, mask } => Box::new(
+                mask.iter()
+                    .enumerate()
+                    .filter(|(_, &set)| set)
+                    .map(move |(i, _)| {
+                        let addr = base + i * 4;
+                        let old = self.value_at(addr);
+                        let base = addr - self.info.BaseAddress as usize;
+                        let bytes = &new_memory[base..base + 4];
+                        let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                        (addr, old, new)
+                    }),
+            ),
         }
     }
 }
