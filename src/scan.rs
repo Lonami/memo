@@ -287,12 +287,12 @@ impl Region {
     /// Return the value stored at `addr`.
     fn value_at(&self, addr: usize) -> i32 {
         match &self.value {
+            Value::Exact(n) => *n,
             Value::AnyWithin(chunk) => {
                 let base = addr - self.info.BaseAddress as usize;
                 let bytes = &chunk[base..base + 4];
                 i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
             }
-            _ => todo!(),
         }
     }
 }
