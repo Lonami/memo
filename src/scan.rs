@@ -197,6 +197,63 @@ impl CandidateLocations {
             CandidateLocations::Sparse { mask, .. } => mask.iter().filter(|x| **x).count(),
         }
     }
+
+    /// Tries to compact the candidate locations into a more efficient representation.
+    pub fn try_compact(&mut self) {
+        let locations = match self {
+            CandidateLocations::Discrete { locations } if locations.len() >= 2 => {
+                mem::take(locations)
+            }
+            _ => return,
+        };
+
+        // It is assumed that locations are always sorted in ascending order.
+        let low = *locations.first().unwrap();
+        let high = *locations.last().unwrap();
+        let size = high - low;
+
+        // Can the entire region be represented with a base and 16-bit offsets?
+        // And is it more worth than using a single byte per location?
+        if size <= u16::MAX as _ && locations.len() * mem::size_of::<u16>() < size {
+            // We will always store a `0` offset, but that's fine, it makes iteration easier and
+            // getting rid of it would only gain usu 2 bytes.
+            *self = CandidateLocations::SmallDiscrete {
+                base: low,
+                offsets: locations
+                    .into_iter()
+                    .map(|loc| (loc - low).try_into().unwrap())
+                    .collect(),
+            };
+            return;
+        }
+
+        // Would using a byte-mask for the entire region be more worth it?
+        if size / 4 < locations.len() * mem::size_of::<usize>() {
+            assert_eq!(low % 4, 0);
+
+            let mut locations = locations.into_iter();
+            let mut next_set = locations.next();
+            *self = CandidateLocations::Sparse {
+                base: low,
+                mask: (low..high)
+                    .step_by(4)
+                    .map(|addr| {
+                        if Some(addr) == next_set {
+                            next_set = locations.next();
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .collect(),
+            };
+            return;
+        }
+
+        // Neither of the attempts is really better than just storing the locations.
+        // Revert to using a discrete representation.
+        *self = CandidateLocations::Discrete { locations };
+    }
 }
 
 impl Region {
