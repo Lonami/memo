@@ -7,7 +7,7 @@ use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
 /// A scan type.
 ///
 /// The variant determines how a memory scan should be performed.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scan {
     /// Perform an exact memory scan.
     /// Only memory locations containing this exact value will be considered.
@@ -344,7 +344,63 @@ impl Region {
 }
 
 #[cfg(test)]
-mod tests {
+mod scan_tests {
+    use super::*;
+
+    #[test]
+    fn exact() {
+        assert_eq!("42".parse(), Ok(Scan::Exact(42)));
+        assert_eq!("-42".parse(), Ok(Scan::Exact(-42)));
+    }
+
+    #[test]
+    fn unknown() {
+        assert_eq!("u".parse(), Ok(Scan::Unknown));
+    }
+
+    #[test]
+    fn in_range() {
+        assert_eq!("12..34".parse(), Ok(Scan::InRange(12, 33)));
+        assert_eq!("12..=34".parse(), Ok(Scan::InRange(12, 34)));
+    }
+
+    #[test]
+    fn unchanged() {
+        assert_eq!("=".parse(), Ok(Scan::Unchanged));
+    }
+
+    #[test]
+    fn changed() {
+        assert_eq!("~".parse(), Ok(Scan::Changed));
+    }
+
+    #[test]
+    fn decreased() {
+        assert_eq!("d".parse(), Ok(Scan::Decreased));
+    }
+
+    #[test]
+    fn increased() {
+        assert_eq!("i".parse(), Ok(Scan::Increased));
+    }
+
+    #[test]
+    fn decreased_by() {
+        assert_eq!("d42".parse(), Ok(Scan::DecreasedBy(42)));
+        assert_eq!("d 42".parse(), Ok(Scan::DecreasedBy(42)));
+        assert_eq!("d-42".parse(), Ok(Scan::DecreasedBy(-42)));
+    }
+
+    #[test]
+    fn increased_by() {
+        assert_eq!("i42".parse(), Ok(Scan::IncreasedBy(42)));
+        assert_eq!("i 42".parse(), Ok(Scan::IncreasedBy(42)));
+        assert_eq!("i-42".parse(), Ok(Scan::IncreasedBy(-42)));
+    }
+}
+
+#[cfg(test)]
+mod candidate_location_tests {
     use super::*;
 
     #[test]
