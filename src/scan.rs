@@ -1,14 +1,17 @@
 use std::convert::TryInto;
 use std::mem;
-use std::ops::Range;
+use std::ops::{Range, Sub};
 use std::str::FromStr;
 use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
+
+/// Represents types that can be scanned for in memory.
+pub trait Scannable: Copy + Eq + Ord + Sub {}
 
 /// A scan type.
 ///
 /// The variant determines how a memory scan should be performed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Scan<T> {
+pub enum Scan<T: Scannable> {
     /// Perform an exact memory scan.
     /// Only memory locations containing this exact value will be considered.
     Exact(T),
@@ -56,7 +59,7 @@ pub enum CandidateLocations {
 
 /// A value found in memory.
 #[derive(Clone)]
-pub enum Value<T> {
+pub enum Value<T: Scannable> {
     /// All the values exactly matched this at the time of the scan.
     Exact(T),
     /// The value is not known, so anything represented within this chunk must be considered.
@@ -65,7 +68,7 @@ pub enum Value<T> {
 
 /// A memory region.
 #[derive(Clone)]
-pub struct Region<T> {
+pub struct Region<T: Scannable> {
     /// The raw information about this memory region.
     pub info: MEMORY_BASIC_INFORMATION,
     /// Candidate locations that should be considered during subsequent scans.
@@ -74,7 +77,9 @@ pub struct Region<T> {
     pub value: Value<T>,
 }
 
-impl<T> Scan<T> {
+impl<T: Copy + Eq + Ord + Sub> Scannable for T {}
+
+impl<T: Scannable> Scan<T> {
     /// Run the scan over the memory corresponding to the given region information.
     ///
     /// Returns a scanned region with all the results found.
@@ -183,7 +188,7 @@ impl<T> Scan<T> {
     /// let scan = Scan::Increased;
     /// assert!(scan.acceptable(5, 7));
     /// ```
-    fn acceptable(&self, old: i32, new: i32) -> bool {
+    fn acceptable(&self, old: T, new: T) -> bool {
         match *self {
             Scan::Exact(n) => new == n,
             Scan::Unknown => true,
@@ -329,7 +334,7 @@ impl CandidateLocations {
     }
 }
 
-impl<T> Region<T> {
+impl<T: Scannable> Region<T> {
     /// Return the value stored at `addr`.
     fn value_at(&self, addr: usize) -> T {
         match &self.value {

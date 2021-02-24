@@ -1,4 +1,4 @@
-use crate::scan::{Region, Scan};
+use crate::scan::{Region, Scan, Scannable};
 use std::io;
 use std::mem::{self, MaybeUninit};
 use std::ptr::NonNull;
@@ -172,7 +172,7 @@ impl Process {
         }
     }
 
-    pub fn scan_regions<T>(
+    pub fn scan_regions<T: Scannable>(
         &self,
         regions: &[MEMORY_BASIC_INFORMATION],
         scan: Scan<T>,
@@ -194,7 +194,11 @@ impl Process {
             .collect()
     }
 
-    pub fn rescan_regions<T>(&self, regions: &[Region<T>], scan: Scan<T>) -> Vec<Region<T>> {
+    pub fn rescan_regions<T: Scannable>(
+        &self,
+        regions: &[Region<T>],
+        scan: Scan<T>,
+    ) -> Vec<Region<T>> {
         regions
             .iter()
             .flat_map(|region| {
