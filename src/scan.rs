@@ -8,15 +8,15 @@ use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
 ///
 /// The variant determines how a memory scan should be performed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Scan {
+pub enum Scan<T> {
     /// Perform an exact memory scan.
     /// Only memory locations containing this exact value will be considered.
-    Exact(i32),
+    Exact(T),
     /// The value is unknown.
     /// Every memory location is considered valid. This only makes sense for a first scan.
     Unknown,
     /// The value is contained within a given range.
-    InRange(i32, i32),
+    InRange(T, T),
     /// The value has not changed since the last scan.
     /// This only makes sense for subsequent scans.
     Unchanged,
@@ -31,10 +31,10 @@ pub enum Scan {
     Increased,
     /// The value has decreased by the given amount since the last scan.
     /// This only makes sense for subsequent scans.
-    DecreasedBy(i32),
+    DecreasedBy(T),
     /// The value has increased by the given amount since the last scan.
     /// This only makes sense for subsequent scans.
-    IncreasedBy(i32),
+    IncreasedBy(T),
 }
 
 /// Candidate memory locations for holding our desired value.
@@ -56,29 +56,29 @@ pub enum CandidateLocations {
 
 /// A value found in memory.
 #[derive(Clone)]
-pub enum Value {
+pub enum Value<T> {
     /// All the values exactly matched this at the time of the scan.
-    Exact(i32),
+    Exact(T),
     /// The value is not known, so anything represented within this chunk must be considered.
     AnyWithin(Vec<u8>),
 }
 
 /// A memory region.
 #[derive(Clone)]
-pub struct Region {
+pub struct Region<T> {
     /// The raw information about this memory region.
     pub info: MEMORY_BASIC_INFORMATION,
     /// Candidate locations that should be considered during subsequent scans.
     pub locations: CandidateLocations,
     /// The value (or value range) to compare against during subsequent scans.
-    pub value: Value,
+    pub value: Value<T>,
 }
 
-impl Scan {
+impl<T> Scan<T> {
     /// Run the scan over the memory corresponding to the given region information.
     ///
     /// Returns a scanned region with all the results found.
-    pub fn run(&self, info: MEMORY_BASIC_INFORMATION, memory: Vec<u8>) -> Region {
+    pub fn run(&self, info: MEMORY_BASIC_INFORMATION, memory: Vec<u8>) -> Region<T> {
         let base = info.BaseAddress as usize;
         match *self {
             Scan::Exact(n) => {
@@ -141,7 +141,7 @@ impl Scan {
     /// Re-run the scan over a previously-scanned memory region.
     ///
     /// Returns the new scanned region with all the results found.
-    pub fn rerun(&self, region: &Region, memory: Vec<u8>) -> Region {
+    pub fn rerun(&self, region: &Region<T>, memory: Vec<u8>) -> Region<T> {
         match self {
             // Optimization: unknown scan won't narrow down the region at all.
             Scan::Unknown => region.clone(),
@@ -198,7 +198,7 @@ impl Scan {
     }
 }
 
-impl FromStr for Scan {
+impl FromStr for Scan<i32> {
     type Err = std::num::ParseIntError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
@@ -329,9 +329,9 @@ impl CandidateLocations {
     }
 }
 
-impl Region {
+impl<T> Region<T> {
     /// Return the value stored at `addr`.
-    fn value_at(&self, addr: usize) -> i32 {
+    fn value_at(&self, addr: usize) -> T {
         match &self.value {
             Value::Exact(n) => *n,
             Value::AnyWithin(chunk) => {

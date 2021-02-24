@@ -172,7 +172,11 @@ impl Process {
         }
     }
 
-    pub fn scan_regions(&self, regions: &[MEMORY_BASIC_INFORMATION], scan: Scan) -> Vec<Region> {
+    pub fn scan_regions<T>(
+        &self,
+        regions: &[MEMORY_BASIC_INFORMATION],
+        scan: Scan<T>,
+    ) -> Vec<Region<T>> {
         regions
             .iter()
             .flat_map(
@@ -190,7 +194,7 @@ impl Process {
             .collect()
     }
 
-    pub fn rescan_regions(&self, regions: &[Region], scan: Scan) -> Vec<Region> {
+    pub fn rescan_regions<T>(&self, regions: &[Region<T>], scan: Scan<T>) -> Vec<Region<T>> {
         regions
             .iter()
             .flat_map(|region| {
