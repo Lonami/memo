@@ -5,7 +5,7 @@ use std::str::FromStr;
 use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
 
 /// Represents types that can be scanned for in memory.
-pub trait Scannable: Copy + Eq + Ord + Sub {}
+pub trait Scannable: Copy + Eq + Ord + Sub<Output = Self> {}
 
 /// A scan type.
 ///
@@ -77,7 +77,7 @@ pub struct Region<T: Scannable> {
     pub value: Value<T>,
 }
 
-impl<T: Copy + Eq + Ord + Sub> Scannable for T {}
+impl<T: Copy + Eq + Ord + Sub<Output = Self>> Scannable for T {}
 
 impl<T: Scannable> Scan<T> {
     /// Run the scan over the memory corresponding to the given region information.
@@ -197,8 +197,22 @@ impl<T: Scannable> Scan<T> {
             Scan::Changed => new != old,
             Scan::Decreased => new < old,
             Scan::Increased => new > old,
-            Scan::DecreasedBy(n) => old.wrapping_sub(new) == n,
-            Scan::IncreasedBy(n) => new.wrapping_sub(old) == n,
+            // Unfortunately, `X - Y` could panic, so we need to check `X > Y`.
+            // This does mean that we can't do things like "decreased by -7".
+            Scan::DecreasedBy(n) => {
+                if new <= old {
+                    (old - new) == n
+                } else {
+                    false
+                }
+            }
+            Scan::IncreasedBy(n) => {
+                if new >= old {
+                    (new - old) == n
+                } else {
+                    false
+                }
+            }
         }
     }
 }
