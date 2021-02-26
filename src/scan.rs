@@ -109,7 +109,8 @@ impl<T: Scannable> Scan<T> {
                     .enumerate()
                     .step_by(mem::size_of::<T>())
                     .flat_map(|(offset, window)| {
-                        let current = unsafe { *(window.as_ptr() as *const T) };
+                        // SAFETY: `window` has the same length as the size of `T`
+                        let current = unsafe { window.as_ptr().cast::<T>().read_unaligned() };
                         if current == target {
                             Some(base + offset)
                         } else {
@@ -129,7 +130,8 @@ impl<T: Scannable> Scan<T> {
                     .enumerate()
                     .step_by(mem::size_of::<T>())
                     .flat_map(|(offset, window)| {
-                        let n = unsafe { *(window.as_ptr() as *const T) };
+                        // SAFETY: `window` has the same length as the size of `T`
+                        let n = unsafe { window.as_ptr().cast::<T>().read_unaligned() };
                         if low <= n && n <= high {
                             Some(base + offset)
                         } else {
@@ -176,7 +178,8 @@ impl<T: Scannable> Scan<T> {
                             let old = region.value_at(addr);
                             let base = addr - region.info.BaseAddress as usize;
                             let bytes = &memory[base..base + mem::size_of::<T>()];
-                            let new = unsafe { *(bytes.as_ptr() as *const T) };
+                            // SAFETY: `bytes` has the same length as the size of `T`
+                            let new = unsafe { bytes.as_ptr().cast::<T>().read_unaligned() };
                             if self.acceptable(old, new) {
                                 Some(addr)
                             } else {
@@ -373,7 +376,8 @@ impl<T: Scannable> Region<T> {
             Value::AnyWithin(chunk) => {
                 let base = addr - self.info.BaseAddress as usize;
                 let bytes = &chunk[base..base + mem::size_of::<T>()];
-                unsafe { *(bytes.as_ptr() as *const T) }
+                // SAFETY: `bytes` has the same length as the size of `T`
+                unsafe { bytes.as_ptr().cast::<T>().read_unaligned() }
             }
         }
     }
