@@ -103,14 +103,14 @@ impl<T: Scannable> Scan<T> {
     pub fn run(&self, info: MEMORY_BASIC_INFORMATION, memory: Vec<u8>) -> Region<T> {
         let base = info.BaseAddress as usize;
         match *self {
-            Scan::Exact(n) => {
-                let target = n.to_ne_bytes();
+            Scan::Exact(target) => {
                 let locations = memory
-                    .windows(target.len())
+                    .windows(mem::size_of::<T>())
                     .enumerate()
-                    .step_by(4)
+                    .step_by(mem::size_of::<T>())
                     .flat_map(|(offset, window)| {
-                        if window == target {
+                        let current = unsafe { *(window.as_ptr() as *const T) };
+                        if current == target {
                             Some(base + offset)
                         } else {
                             None
@@ -120,16 +120,16 @@ impl<T: Scannable> Scan<T> {
                 Region {
                     info,
                     locations: CandidateLocations::Discrete { locations },
-                    value: Value::Exact(n),
+                    value: Value::Exact(target),
                 }
             }
             Scan::InRange(low, high) => {
                 let locations = memory
-                    .windows(4)
+                    .windows(mem::size_of::<T>())
                     .enumerate()
-                    .step_by(4)
+                    .step_by(mem::size_of::<T>())
                     .flat_map(|(offset, window)| {
-                        let n = i32::from_ne_bytes([window[0], window[1], window[2], window[3]]);
+                        let n = unsafe { *(window.as_ptr() as *const T) };
                         if low <= n && n <= high {
                             Some(base + offset)
                         } else {
@@ -175,8 +175,8 @@ impl<T: Scannable> Scan<T> {
                         .flat_map(|addr| {
                             let old = region.value_at(addr);
                             let base = addr - region.info.BaseAddress as usize;
-                            let bytes = &memory[base..base + 4];
-                            let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                            let bytes = &memory[base..base + mem::size_of::<T>()];
+                            let new = unsafe { *(bytes.as_ptr() as *const T) };
                             if self.acceptable(old, new) {
                                 Some(addr)
                             } else {
@@ -372,8 +372,8 @@ impl<T: Scannable> Region<T> {
             Value::Exact(n) => *n,
             Value::AnyWithin(chunk) => {
                 let base = addr - self.info.BaseAddress as usize;
-                let bytes = &chunk[base..base + 4];
-                i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+                let bytes = &chunk[base..base + mem::size_of::<T>()];
+                unsafe { *(bytes.as_ptr() as *const T) }
             }
         }
     }
