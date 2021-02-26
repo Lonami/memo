@@ -1,22 +1,35 @@
 use std::convert::TryInto;
 use std::mem;
-use std::ops::Range;
+use std::ops::{Range, Sub};
 use std::str::FromStr;
 use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
+
+/// Represents types that can be scanned for in memory.
+///
+/// # Safety
+///
+/// Every possible memory representation of the type must produce a valid value. For example,
+/// the memory representation `[2u8]` would be invalid for `bool` which can only be `0` or `1`,
+/// so implementing the trait for `bool` will cause Undefined Behaviour. However, any 4 bytes
+/// can represent a valid `i32`, so it is safe to implement the trait for `i32`.
+///
+/// In order words, it must be safe to `transmute` any byte sequence of the same size as `T` into
+/// `T`.
+pub unsafe trait Scannable: Copy + PartialEq + PartialOrd + Sub<Output = Self> {}
 
 /// A scan type.
 ///
 /// The variant determines how a memory scan should be performed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Scan {
+pub enum Scan<T: Scannable> {
     /// Perform an exact memory scan.
     /// Only memory locations containing this exact value will be considered.
-    Exact(i32),
+    Exact(T),
     /// The value is unknown.
     /// Every memory location is considered valid. This only makes sense for a first scan.
     Unknown,
     /// The value is contained within a given range.
-    InRange(i32, i32),
+    InRange(T, T),
     /// The value has not changed since the last scan.
     /// This only makes sense for subsequent scans.
     Unchanged,
@@ -31,10 +44,10 @@ pub enum Scan {
     Increased,
     /// The value has decreased by the given amount since the last scan.
     /// This only makes sense for subsequent scans.
-    DecreasedBy(i32),
+    DecreasedBy(T),
     /// The value has increased by the given amount since the last scan.
     /// This only makes sense for subsequent scans.
-    IncreasedBy(i32),
+    IncreasedBy(T),
 }
 
 /// Candidate memory locations for holding our desired value.
@@ -56,39 +69,48 @@ pub enum CandidateLocations {
 
 /// A value found in memory.
 #[derive(Clone)]
-pub enum Value {
+pub enum Value<T: Scannable> {
     /// All the values exactly matched this at the time of the scan.
-    Exact(i32),
+    Exact(T),
     /// The value is not known, so anything represented within this chunk must be considered.
     AnyWithin(Vec<u8>),
 }
 
 /// A memory region.
 #[derive(Clone)]
-pub struct Region {
+pub struct Region<T: Scannable> {
     /// The raw information about this memory region.
     pub info: MEMORY_BASIC_INFORMATION,
     /// Candidate locations that should be considered during subsequent scans.
     pub locations: CandidateLocations,
     /// The value (or value range) to compare against during subsequent scans.
-    pub value: Value,
+    pub value: Value<T>,
 }
 
-impl Scan {
+macro_rules! impl_many {
+    ( unsafe impl $trait:tt for $( $ty:ty ),* ) => {
+        $( unsafe impl $trait for $ty {} )*
+    };
+}
+
+// SAFETY: all these types respect `Scannable` invariants.
+impl_many!(unsafe impl Scannable for i8, u8, i16, u16, i32, u32, i64, u64, f32, f64);
+
+impl<T: Scannable> Scan<T> {
     /// Run the scan over the memory corresponding to the given region information.
     ///
     /// Returns a scanned region with all the results found.
-    pub fn run(&self, info: MEMORY_BASIC_INFORMATION, memory: Vec<u8>) -> Region {
+    pub fn run(&self, info: MEMORY_BASIC_INFORMATION, memory: Vec<u8>) -> Region<T> {
         let base = info.BaseAddress as usize;
         match *self {
-            Scan::Exact(n) => {
-                let target = n.to_ne_bytes();
+            Scan::Exact(target) => {
                 let locations = memory
-                    .windows(target.len())
+                    .windows(mem::size_of::<T>())
                     .enumerate()
-                    .step_by(4)
+                    .step_by(mem::size_of::<T>())
                     .flat_map(|(offset, window)| {
-                        if window == target {
+                        let current = unsafe { *(window.as_ptr() as *const T) };
+                        if current == target {
                             Some(base + offset)
                         } else {
                             None
@@ -98,16 +120,16 @@ impl Scan {
                 Region {
                     info,
                     locations: CandidateLocations::Discrete { locations },
-                    value: Value::Exact(n),
+                    value: Value::Exact(target),
                 }
             }
             Scan::InRange(low, high) => {
                 let locations = memory
-                    .windows(4)
+                    .windows(mem::size_of::<T>())
                     .enumerate()
-                    .step_by(4)
+                    .step_by(mem::size_of::<T>())
                     .flat_map(|(offset, window)| {
-                        let n = i32::from_ne_bytes([window[0], window[1], window[2], window[3]]);
+                        let n = unsafe { *(window.as_ptr() as *const T) };
                         if low <= n && n <= high {
                             Some(base + offset)
                         } else {
@@ -141,7 +163,7 @@ impl Scan {
     /// Re-run the scan over a previously-scanned memory region.
     ///
     /// Returns the new scanned region with all the results found.
-    pub fn rerun(&self, region: &Region, memory: Vec<u8>) -> Region {
+    pub fn rerun(&self, region: &Region<T>, memory: Vec<u8>) -> Region<T> {
         match self {
             // Optimization: unknown scan won't narrow down the region at all.
             Scan::Unknown => region.clone(),
@@ -153,8 +175,8 @@ impl Scan {
                         .flat_map(|addr| {
                             let old = region.value_at(addr);
                             let base = addr - region.info.BaseAddress as usize;
-                            let bytes = &memory[base..base + 4];
-                            let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                            let bytes = &memory[base..base + mem::size_of::<T>()];
+                            let new = unsafe { *(bytes.as_ptr() as *const T) };
                             if self.acceptable(old, new) {
                                 Some(addr)
                             } else {
@@ -183,7 +205,7 @@ impl Scan {
     /// let scan = Scan::Increased;
     /// assert!(scan.acceptable(5, 7));
     /// ```
-    fn acceptable(&self, old: i32, new: i32) -> bool {
+    fn acceptable(&self, old: T, new: T) -> bool {
         match *self {
             Scan::Exact(n) => new == n,
             Scan::Unknown => true,
@@ -192,13 +214,27 @@ impl Scan {
             Scan::Changed => new != old,
             Scan::Decreased => new < old,
             Scan::Increased => new > old,
-            Scan::DecreasedBy(n) => old.wrapping_sub(new) == n,
-            Scan::IncreasedBy(n) => new.wrapping_sub(old) == n,
+            // Unfortunately, `X - Y` could panic, so we need to check `X > Y`.
+            // This does mean that we can't do things like "decreased by -7".
+            Scan::DecreasedBy(n) => {
+                if new <= old {
+                    (old - new) == n
+                } else {
+                    false
+                }
+            }
+            Scan::IncreasedBy(n) => {
+                if new >= old {
+                    (new - old) == n
+                } else {
+                    false
+                }
+            }
         }
     }
 }
 
-impl FromStr for Scan {
+impl FromStr for Scan<i32> {
     type Err = std::num::ParseIntError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
@@ -329,15 +365,15 @@ impl CandidateLocations {
     }
 }
 
-impl Region {
+impl<T: Scannable> Region<T> {
     /// Return the value stored at `addr`.
-    fn value_at(&self, addr: usize) -> i32 {
+    fn value_at(&self, addr: usize) -> T {
         match &self.value {
             Value::Exact(n) => *n,
             Value::AnyWithin(chunk) => {
                 let base = addr - self.info.BaseAddress as usize;
-                let bytes = &chunk[base..base + 4];
-                i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+                let bytes = &chunk[base..base + mem::size_of::<T>()];
+                unsafe { *(bytes.as_ptr() as *const T) }
             }
         }
     }
