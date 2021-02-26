@@ -5,7 +5,17 @@ use std::str::FromStr;
 use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
 
 /// Represents types that can be scanned for in memory.
-pub trait Scannable: Copy + Eq + Ord + Sub<Output = Self> {}
+///
+/// # Safety
+///
+/// Every possible memory representation of the type must produce a valid value. For example,
+/// the memory representation `[2u8]` would be invalid for `bool` which can only be `0` or `1`,
+/// so implementing the trait for `bool` will cause Undefined Behaviour. However, any 4 bytes
+/// can represent a valid `i32`, so it is safe to implement the trait for `i32`.
+///
+/// In order words, it must be safe to `transmute` any byte sequence of the same size as `T` into
+/// `T`.
+pub unsafe trait Scannable: Copy + PartialEq + PartialOrd + Sub<Output = Self> {}
 
 /// A scan type.
 ///
@@ -77,7 +87,14 @@ pub struct Region<T: Scannable> {
     pub value: Value<T>,
 }
 
-impl<T: Copy + Eq + Ord + Sub<Output = Self>> Scannable for T {}
+macro_rules! impl_many {
+    ( unsafe impl $trait:tt for $( $ty:ty ),* ) => {
+        $( unsafe impl $trait for $ty {} )*
+    };
+}
+
+// SAFETY: all these types respect `Scannable` invariants.
+impl_many!(unsafe impl Scannable for i8, u8, i16, u16, i32, u32, i64, u64, f32, f64);
 
 impl<T: Scannable> Scan<T> {
     /// Run the scan over the memory corresponding to the given region information.
