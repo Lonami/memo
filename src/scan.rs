@@ -7,7 +7,7 @@ use std::str::FromStr;
 use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
 
 /// Represents the scan mode according associated to a certain type.
-pub trait ScanMode: Clone {
+pub trait ScanMode {
     /// Returns `true` if the current instance is considered equal to the given chunk of memory.
     ///
     /// Callers must `assert_eq!(left.len(), right.len())`, and the length must also match that of
