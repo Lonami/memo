@@ -172,7 +172,7 @@ impl Process {
         }
     }
 
-    pub fn scan_regions<T: Scannable>(
+    pub fn scan_regions<T: Scannable + Clone>(
         &self,
         regions: &[MEMORY_BASIC_INFORMATION],
         scan: Scan<T>,
@@ -194,7 +194,7 @@ impl Process {
             .collect()
     }
 
-    pub fn rescan_regions<T: Scannable>(
+    pub fn rescan_regions<T: Scannable + Clone>(
         &self,
         regions: &[Region<T>],
         scan: Scan<T>,

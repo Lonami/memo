@@ -6,7 +6,7 @@ use std::str::FromStr;
 use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
 
 /// Represents types that can be scanned for in memory.
-pub unsafe trait Scannable: Clone {
+pub unsafe trait Scannable {
     /// Returns `true` if the current instance is considered equal to the given chunk of memory.
     ///
     /// Callers must `assert_eq!(memory.len(), Scannable::size(self))`.
@@ -28,10 +28,7 @@ pub unsafe trait Scannable: Clone {
     unsafe fn rsub(&self, memory: &[u8]) -> Self;
 
     /// Return the memory view corresponding to this value.
-    fn mem_view(&self) -> &[u8] {
-        // SAFETY: output slice len matches Self size.
-        unsafe { std::slice::from_raw_parts(self as *const _ as *const u8, mem::size_of::<Self>()) }
-    }
+    fn mem_view(&self) -> &[u8];
 
     /// Return the size of this object's representation in memory.
     ///
@@ -44,7 +41,7 @@ pub unsafe trait Scannable: Clone {
 ///
 /// The variant determines how a memory scan should be performed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Scan<T: Scannable> {
+pub enum Scan<T: Scannable + Clone> {
     /// Perform an exact memory scan.
     /// Only memory locations containing this exact value will be considered.
     Exact(T),
@@ -139,6 +136,11 @@ macro_rules! impl_scannable_for_int {
                     other.wrapping_sub(*self)
                 }
 
+                fn mem_view(&self) -> &[u8] {
+                    // SAFETY: output slice len matches Self size.
+                    unsafe { std::slice::from_raw_parts(self as *const _ as *const u8, mem::size_of::<$ty>()) }
+                }
+
                 // SAFETY: the returned value corresponds to the size of the integer type
                 fn size(&self) -> usize {
                     mem::size_of::<$ty>()
@@ -182,6 +184,11 @@ macro_rules! impl_scannable_for_float {
                     other - self
                 }
 
+                fn mem_view(&self) -> &[u8] {
+                    // SAFETY: output slice len matches Self size.
+                    unsafe { std::slice::from_raw_parts(self as *const _ as *const u8, mem::size_of::<$ty>()) }
+                }
+
                 // SAFETY: the returned value corresponds to the size of the integer type
                 fn size(&self) -> usize {
                     mem::size_of::<$ty>()
@@ -194,7 +201,7 @@ macro_rules! impl_scannable_for_float {
 impl_scannable_for_int!(i8, u8, i16, u16, i32, u32, i64, u64);
 impl_scannable_for_float!(f32: u32, f64: u64);
 
-impl<T: Scannable> Scan<T> {
+impl<T: Scannable + Clone> Scan<T> {
     /// Run the scan over the memory corresponding to the given region information.
     ///
     /// Returns a scanned region with all the results found.
@@ -462,7 +469,7 @@ impl CandidateLocations {
     }
 }
 
-impl<T: Scannable> Region<T> {
+impl<T: Scannable + Clone> Region<T> {
     /// Return the value stored at `addr`.
     fn value_at(&self, addr: usize) -> T {
         match &self.value {
