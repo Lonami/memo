@@ -1,4 +1,4 @@
-use crate::scan::Scan;
+use crate::scan::{Scan, Scannable};
 use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::io::{stdin, stdout, Write};
@@ -108,7 +108,7 @@ pub fn list_picker<T: Display>(items: &[T]) -> &T {
 }
 
 /// Prompt the user to perform a scan.
-pub fn prompt_scan() -> Result<Scan<i32>, std::num::ParseIntError> {
+pub fn prompt_scan() -> Result<Scan<Box<dyn Scannable>>, std::num::ParseIntError> {
     let mut input = String::new();
     loop {
         {
@@ -134,7 +134,7 @@ pub fn prompt_scan() -> Result<Scan<i32>, std::num::ParseIntError> {
             println!("|");
             println!("| Scan for range with no prefix LOW..HIGH (or inclusive ..=)");
         } else {
-            break value.parse::<Scan<i32>>();
+            break value.parse();
         }
     }
 }
