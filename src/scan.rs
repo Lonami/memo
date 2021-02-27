@@ -201,6 +201,32 @@ macro_rules! impl_scannable_for_float {
 impl_scannable_for_int!(i8, u8, i16, u16, i32, u32, i64, u64);
 impl_scannable_for_float!(f32: u32, f64: u64);
 
+unsafe impl<T: AsRef<dyn Scannable> + AsMut<dyn Scannable>> Scannable for T {
+    unsafe fn eq(&self, memory: &[u8]) -> bool {
+        self.as_ref().eq(memory)
+    }
+
+    unsafe fn cmp(&self, memory: &[u8]) -> Ordering {
+        self.as_ref().cmp(memory)
+    }
+
+    unsafe fn sub(&mut self, memory: &[u8]) {
+        self.as_mut().sub(memory)
+    }
+
+    unsafe fn rsub(&mut self, memory: &[u8]) {
+        self.as_mut().rsub(memory)
+    }
+
+    fn mem_view(&self) -> &[u8] {
+        self.as_ref().mem_view()
+    }
+
+    fn size(&self) -> usize {
+        self.as_ref().size()
+    }
+}
+
 impl<T: Scannable + Clone> Scan<T> {
     /// Run the scan over the memory corresponding to the given region information.
     ///
