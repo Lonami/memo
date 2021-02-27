@@ -6,25 +6,25 @@ use std::str::FromStr;
 use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
 
 /// Represents types that can be scanned for in memory.
-pub trait Scannable: Clone {
+pub unsafe trait Scannable: Clone {
     /// Returns `true` if the current instance is considered equal to the given chunk of memory.
     ///
-    /// Callers must `assert_eq!(memory.len(), mem::size_of::<Self>())`.
+    /// Callers must `assert_eq!(memory.len(), Scannable::size(self))`.
     unsafe fn eq(&self, memory: &[u8]) -> bool;
 
     /// Compares `self` to the given chunk of memory.
     ///
-    /// Callers must `assert_eq!(memory.len(), mem::size_of::<Self>())`.
+    /// Callers must `assert_eq!(memory.len(), Scannable::size(self))`.
     unsafe fn cmp(&self, memory: &[u8]) -> Ordering;
 
     /// Substracts the given chunk of memory from `self`.
     ///
-    /// Callers must `assert_eq!(memory.len(), mem::size_of::<Self>())`.
+    /// Callers must `assert_eq!(memory.len(), Scannable::size(self))`.
     unsafe fn sub(&self, memory: &[u8]) -> Self;
 
     /// Substracts `self` from the given chunk of memory.
     ///
-    /// Callers must `assert_eq!(memory.len(), mem::size_of::<Self>())`.
+    /// Callers must `assert_eq!(memory.len(), Scannable::size(self))`.
     unsafe fn rsub(&self, memory: &[u8]) -> Self;
 
     /// Return the memory view corresponding to this value.
@@ -32,6 +32,12 @@ pub trait Scannable: Clone {
         // SAFETY: output slice len matches Self size.
         unsafe { std::slice::from_raw_parts(self as *const _ as *const u8, mem::size_of::<Self>()) }
     }
+
+    /// Return the size of this object's representation in memory.
+    ///
+    /// Implementors must always return the same size for a specific value, and it must correspond
+    /// to the actual size of the value.
+    fn size(&self) -> usize;
 }
 
 /// A scan type.
@@ -108,29 +114,34 @@ macro_rules! impl_scannable_for_int {
     ( $( $ty:ty ),* ) => {
         $(
             #[allow(unused_unsafe)] // mind you, it is necessary
-            impl Scannable for $ty {
+            unsafe impl Scannable for $ty {
                 unsafe fn eq(&self, memory: &[u8]) -> bool {
-                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), mem::size_of::<T>())`
+                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), Scannable::size(T))`
                     let other = unsafe { memory.as_ptr().cast::<$ty>().read_unaligned() };
                     *self == other
                 }
 
                 unsafe fn cmp(&self, memory: &[u8]) -> Ordering {
-                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), mem::size_of::<T>())`
+                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), Scannable::size(T))`
                     let other = unsafe { memory.as_ptr().cast::<$ty>().read_unaligned() };
                     <$ty as Ord>::cmp(self, &other)
                 }
 
                 unsafe fn sub(&self, memory: &[u8]) -> Self {
-                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), mem::size_of::<T>())`
+                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), Scannable::size(T))`
                     let other = unsafe { memory.as_ptr().cast::<$ty>().read_unaligned() };
                     self.wrapping_sub(other)
                 }
 
                 unsafe fn rsub(&self, memory: &[u8]) -> Self {
-                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), mem::size_of::<T>())`
+                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), Scannable::size(T))`
                     let other = unsafe { memory.as_ptr().cast::<$ty>().read_unaligned() };
                     other.wrapping_sub(*self)
+                }
+
+                // SAFETY: the returned value corresponds to the size of the integer type
+                fn size(&self) -> usize {
+                    mem::size_of::<$ty>()
                 }
             }
         )*
@@ -141,11 +152,11 @@ macro_rules! impl_scannable_for_float {
     ( $( $ty:ty : $int_ty:ty ),* ) => {
         $(
             #[allow(unused_unsafe)] // mind you, it is necessary
-            impl Scannable for $ty {
+            unsafe impl Scannable for $ty {
                 unsafe fn eq(&self, memory: &[u8]) -> bool {
                     const MASK: $int_ty = !((1 << (<$ty>::MANTISSA_DIGITS / 2)) - 1);
 
-                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), mem::size_of::<T>())`
+                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), Scannable::size(T))`
                     let other = unsafe { memory.as_ptr().cast::<$ty>().read_unaligned() };
                     let left = <$ty>::from_bits(self.to_bits() & MASK);
                     let right = <$ty>::from_bits(other.to_bits() & MASK);
@@ -153,22 +164,27 @@ macro_rules! impl_scannable_for_float {
                 }
 
                 unsafe fn cmp(&self, memory: &[u8]) -> Ordering {
-                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), mem::size_of::<T>())`
+                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), Scannable::size(T))`
                     let other = unsafe { memory.as_ptr().cast::<$ty>().read_unaligned() };
                     // FIXME: https://github.com/rust-lang/rust/issues/72599
                     self.partial_cmp(&other).unwrap_or(Ordering::Less)
                 }
 
                 unsafe fn sub(&self, memory: &[u8]) -> Self {
-                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), mem::size_of::<T>())`
+                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), Scannable::size(T))`
                     let other = unsafe { memory.as_ptr().cast::<$ty>().read_unaligned() };
                     self - other
                 }
 
                 unsafe fn rsub(&self, memory: &[u8]) -> Self {
-                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), mem::size_of::<T>())`
+                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), Scannable::size(T))`
                     let other = unsafe { memory.as_ptr().cast::<$ty>().read_unaligned() };
                     other - self
+                }
+
+                // SAFETY: the returned value corresponds to the size of the integer type
+                fn size(&self) -> usize {
+                    mem::size_of::<$ty>()
                 }
             }
         )*
@@ -187,11 +203,11 @@ impl<T: Scannable> Scan<T> {
         match self {
             Scan::Exact(target) => {
                 let locations = memory
-                    .windows(mem::size_of::<T>())
+                    .windows(target.size())
                     .enumerate()
                     .step_by(mem::align_of::<T>())
                     .flat_map(|(offset, window)| {
-                        // SAFETY: `window.len() == mem::size_of::<T>()`.
+                        // SAFETY: `window.len() == Scannable::size(target)`.
                         if unsafe { target.eq(window) } {
                             Some(base + offset)
                         } else {
@@ -206,12 +222,13 @@ impl<T: Scannable> Scan<T> {
                 }
             }
             Scan::InRange(low, high) => {
+                assert_eq!(low.size(), high.size());
                 let locations = memory
-                    .windows(mem::size_of::<T>())
+                    .windows(low.size())
                     .enumerate()
                     .step_by(mem::align_of::<T>())
                     .flat_map(|(offset, window)| {
-                        // SAFETY: `window.len() == mem::size_of::<T>()`.
+                        // SAFETY: `window.len() == Scannable::size(target)`.
                         if unsafe {
                             low.cmp(window) != Ordering::Greater
                                 && high.cmp(window) != Ordering::Less
