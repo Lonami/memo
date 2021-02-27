@@ -20,12 +20,12 @@ pub unsafe trait Scannable {
     /// Substracts the given chunk of memory from `self`.
     ///
     /// Callers must `assert_eq!(memory.len(), Scannable::size(self))`.
-    unsafe fn sub(&self, memory: &[u8]) -> Self;
+    unsafe fn sub(&mut self, memory: &[u8]);
 
     /// Substracts `self` from the given chunk of memory.
     ///
     /// Callers must `assert_eq!(memory.len(), Scannable::size(self))`.
-    unsafe fn rsub(&self, memory: &[u8]) -> Self;
+    unsafe fn rsub(&mut self, memory: &[u8]);
 
     /// Return the memory view corresponding to this value.
     fn mem_view(&self) -> &[u8];
@@ -124,16 +124,16 @@ macro_rules! impl_scannable_for_int {
                     <$ty as Ord>::cmp(self, &other)
                 }
 
-                unsafe fn sub(&self, memory: &[u8]) -> Self {
+                unsafe fn sub(&mut self, memory: &[u8]) {
                     // SAFETY: caller is responsible to `assert_eq!(memory.len(), Scannable::size(T))`
                     let other = unsafe { memory.as_ptr().cast::<$ty>().read_unaligned() };
-                    self.wrapping_sub(other)
+                    *self = self.wrapping_sub(other);
                 }
 
-                unsafe fn rsub(&self, memory: &[u8]) -> Self {
+                unsafe fn rsub(&mut self, memory: &[u8]) {
                     // SAFETY: caller is responsible to `assert_eq!(memory.len(), Scannable::size(T))`
                     let other = unsafe { memory.as_ptr().cast::<$ty>().read_unaligned() };
-                    other.wrapping_sub(*self)
+                    *self = other.wrapping_sub(*self);
                 }
 
                 fn mem_view(&self) -> &[u8] {
@@ -172,16 +172,16 @@ macro_rules! impl_scannable_for_float {
                     self.partial_cmp(&other).unwrap_or(Ordering::Less)
                 }
 
-                unsafe fn sub(&self, memory: &[u8]) -> Self {
+                unsafe fn sub(&mut self, memory: &[u8]) {
                     // SAFETY: caller is responsible to `assert_eq!(memory.len(), Scannable::size(T))`
                     let other = unsafe { memory.as_ptr().cast::<$ty>().read_unaligned() };
-                    self - other
+                    *self = *self - other;
                 }
 
-                unsafe fn rsub(&self, memory: &[u8]) -> Self {
+                unsafe fn rsub(&mut self, memory: &[u8]) {
                     // SAFETY: caller is responsible to `assert_eq!(memory.len(), Scannable::size(T))`
                     let other = unsafe { memory.as_ptr().cast::<$ty>().read_unaligned() };
-                    other - self
+                    *self = other - *self;
                 }
 
                 fn mem_view(&self) -> &[u8] {
@@ -329,8 +329,16 @@ impl<T: Scannable + Clone> Scan<T> {
             Scan::Changed => !old.eq(new),
             Scan::Decreased => old.cmp(new) == Ordering::Greater,
             Scan::Increased => old.cmp(new) == Ordering::Less,
-            Scan::DecreasedBy(n) => n.eq(old.sub(new).mem_view()),
-            Scan::IncreasedBy(n) => n.eq(old.rsub(new).mem_view()),
+            Scan::DecreasedBy(n) => {
+                let mut delta = old.clone();
+                delta.sub(new);
+                n.eq(delta.mem_view())
+            }
+            Scan::IncreasedBy(n) => {
+                let mut delta = old.clone();
+                delta.rsub(new);
+                n.eq(delta.mem_view())
+            }
         }
     }
 }
