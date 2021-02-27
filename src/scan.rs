@@ -137,7 +137,46 @@ macro_rules! impl_scannable_for_int {
     };
 }
 
+macro_rules! impl_scannable_for_float {
+    ( $( $ty:ty : $int_ty:ty ),* ) => {
+        $(
+            #[allow(unused_unsafe)] // mind you, it is necessary
+            impl Scannable for $ty {
+                unsafe fn eq(&self, memory: &[u8]) -> bool {
+                    const MASK: $int_ty = !((1 << (<$ty>::MANTISSA_DIGITS / 2)) - 1);
+
+                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), mem::size_of::<T>())`
+                    let other = unsafe { memory.as_ptr().cast::<$ty>().read_unaligned() };
+                    let left = <$ty>::from_bits(self.to_bits() & MASK);
+                    let right = <$ty>::from_bits(other.to_bits() & MASK);
+                    left == right
+                }
+
+                unsafe fn cmp(&self, memory: &[u8]) -> Ordering {
+                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), mem::size_of::<T>())`
+                    let other = unsafe { memory.as_ptr().cast::<$ty>().read_unaligned() };
+                    // FIXME: https://github.com/rust-lang/rust/issues/72599
+                    self.partial_cmp(&other).unwrap_or(Ordering::Less)
+                }
+
+                unsafe fn sub(&self, memory: &[u8]) -> Self {
+                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), mem::size_of::<T>())`
+                    let other = unsafe { memory.as_ptr().cast::<$ty>().read_unaligned() };
+                    self - other
+                }
+
+                unsafe fn rsub(&self, memory: &[u8]) -> Self {
+                    // SAFETY: caller is responsible to `assert_eq!(memory.len(), mem::size_of::<T>())`
+                    let other = unsafe { memory.as_ptr().cast::<$ty>().read_unaligned() };
+                    other - self
+                }
+            }
+        )*
+    };
+}
+
 impl_scannable_for_int!(i8, u8, i16, u16, i32, u32, i64, u64);
+impl_scannable_for_float!(f32: u32, f64: u64);
 
 impl<T: Scannable> Scan<T> {
     /// Run the scan over the memory corresponding to the given region information.
@@ -480,6 +519,15 @@ mod scan_tests {
 #[cfg(test)]
 mod candidate_location_tests {
     use super::*;
+
+    #[test]
+    fn f32_roughly_eq() {
+        let left = 0.25f32;
+        let right = 0.25000123f32;
+        let memory = unsafe { mem::transmute::<_, [u8; 4]>(right) };
+        assert_ne!(left, right);
+        assert!(unsafe { Scannable::eq(&left, &memory) });
+    }
 
     #[test]
     fn compact_uncompactable() {
