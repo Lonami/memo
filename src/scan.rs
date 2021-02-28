@@ -433,42 +433,114 @@ impl<T: Scannable> Scan<T> {
 }
 
 impl FromStr for Scan<Box<dyn Scannable>> {
-    type Err = std::num::ParseIntError;
+    type Err = ();
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        let size = mem::size_of::<i32>();
+        enum Ty {
+            I8,
+            U8,
+            I16,
+            U16,
+            I32,
+            U32,
+            I64,
+            U64,
+            F32,
+            F64,
+        }
+
+        impl FromStr for Ty {
+            type Err = ();
+
+            fn from_str(value: &str) -> Result<Self, Self::Err> {
+                Ok(match value {
+                    "i8" | "I8" => Ty::I8,
+                    "u8" | "U8" => Ty::U8,
+                    "i16" | "I16" => Ty::I16,
+                    "u16" | "U16" => Ty::U16,
+                    "i32" | "I32" => Ty::I32,
+                    "u32" | "U32" => Ty::U32,
+                    "i64" | "I64" => Ty::I64,
+                    "u64" | "U64" => Ty::U64,
+                    "f32" | "F32" => Ty::F32,
+                    "f64" | "F64" => Ty::F64,
+                    _ => return Err(()),
+                })
+            }
+        }
+
+        impl Ty {
+            fn parse(&self, value: &str) -> Result<Box<dyn Scannable>, ()> {
+                Ok(match self {
+                    Ty::I8 => Box::new(value.parse::<i8>().map_err(drop)?),
+                    Ty::U8 => Box::new(value.parse::<u8>().map_err(drop)?),
+                    Ty::I16 => Box::new(value.parse::<i16>().map_err(drop)?),
+                    Ty::U16 => Box::new(value.parse::<u16>().map_err(drop)?),
+                    Ty::I32 => Box::new(value.parse::<i32>().map_err(drop)?),
+                    Ty::U32 => Box::new(value.parse::<u32>().map_err(drop)?),
+                    Ty::I64 => Box::new(value.parse::<i64>().map_err(drop)?),
+                    Ty::U64 => Box::new(value.parse::<u64>().map_err(drop)?),
+                    Ty::F32 => Box::new(value.parse::<f32>().map_err(drop)?),
+                    Ty::F64 => Box::new(value.parse::<f64>().map_err(drop)?),
+                })
+            }
+
+            fn size(&self) -> usize {
+                match self {
+                    Ty::I8 | Ty::U8 => 1,
+                    Ty::I16 | Ty::U16 => 2,
+                    Ty::I32 | Ty::U32 | Ty::F32 => 4,
+                    Ty::I64 | Ty::U64 | Ty::F64 => 8,
+                }
+            }
+
+            fn default(&self) -> Box<dyn Scannable> {
+                self.parse("0").unwrap()
+            }
+        }
+
+        let (value, ty) = if let Ok(ty) = value[value.len().saturating_sub(2)..].parse() {
+            (value[..value.len() - 2].trim(), ty)
+        } else if let Ok(ty) = value[value.len().saturating_sub(3)..].parse() {
+            (value[..value.len() - 3].trim(), ty)
+        } else {
+            (value, Ty::I32)
+        };
+
+        let size = ty.size();
+        let mode = ty.default().scan_mode();
         Ok(match value.as_bytes()[0] {
-            b'u' => Scan::Unknown(size, 0.scan_mode()),
-            b'=' => Scan::Unchanged(size, 0.scan_mode()),
-            b'~' => Scan::Changed(size, 0.scan_mode()),
+            b'u' => Scan::Unknown(size, mode),
+            b'=' => Scan::Unchanged(size, mode),
+            b'~' => Scan::Changed(size, mode),
             t @ b'd' | t @ b'i' => {
                 let n = value[1..].trim();
                 if n.is_empty() {
                     if t == b'd' {
-                        Scan::Decreased(size, 0.scan_mode())
+                        Scan::Decreased(size, mode)
                     } else {
-                        Scan::Increased(size, 0.scan_mode())
+                        Scan::Increased(size, mode)
                     }
                 } else {
-                    let n = n.parse::<i32>()?;
+                    let n = ty.parse(n)?;
                     if t == b'd' {
-                        Scan::DecreasedBy(Box::new(n))
+                        Scan::DecreasedBy(n)
                     } else {
-                        Scan::IncreasedBy(Box::new(n))
+                        Scan::IncreasedBy(n)
                     }
                 }
             }
             _ => {
                 let (low, high) = if let Some(i) = value.find("..=") {
-                    (value[..i].parse()?, value[i + 3..].parse()?)
+                    (ty.parse(&value[..i])?, ty.parse(&value[i + 3..])?)
                 } else if let Some(i) = value.find("..") {
-                    (value[..i].parse()?, value[i + 2..].parse::<i32>()? - 1)
+                    // FIXME subtract unit 1 or create exclusive range
+                    (ty.parse(&value[..i])?, ty.parse(&value[i + 2..])?)
                 } else {
-                    let n = value.parse()?;
-                    (n, n)
+                    (ty.parse(value)?, ty.parse(value)?)
                 };
 
-                if low == high {
+                if &low == &high {
                     Scan::Exact(Box::new(low))
                 } else {
                     Scan::InRange(Box::new(low), Box::new(high))

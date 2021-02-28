@@ -108,7 +108,7 @@ pub fn list_picker<T: Display>(items: &[T]) -> &T {
 }
 
 /// Prompt the user to perform a scan.
-pub fn prompt_scan() -> Result<Scan<Box<dyn Scannable>>, std::num::ParseIntError> {
+pub fn prompt_scan() -> Result<Scan<Box<dyn Scannable>>, ()> {
     let mut input = String::new();
     loop {
         {
