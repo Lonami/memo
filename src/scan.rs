@@ -116,13 +116,16 @@ pub enum CandidateLocations {
     /// It is a logic error to have the locations in non-ascending order.
     Discrete { locations: Vec<usize> },
     /// Like `Discrete`, but uses less memory.
-    // TODO this could also assume 4-byte aligned so we'd gain 2 bits for offsets.
     SmallDiscrete { base: usize, offsets: Vec<u16> },
     /// A dense memory location. Everything within here should be considered.
-    Dense { range: Range<usize> },
+    Dense { range: Range<usize>, step: usize },
     /// A sparse memory location. Pretty much like `Dense`, but only items within the mask apply.
     /// The mask assumes 4-byte aligned data  (so one byte for every 4).
-    Sparse { base: usize, mask: Vec<bool> },
+    Sparse {
+        base: usize,
+        mask: Vec<bool>,
+        scale: usize,
+    },
 }
 
 /// A value found in memory.
@@ -271,7 +274,7 @@ impl<T: Scannable> Scan<T> {
                 let locations = memory
                     .windows(target.len())
                     .enumerate()
-                    .step_by(mem::align_of::<T>())
+                    .step_by(target.len())
                     .flat_map(|(offset, window)| {
                         // SAFETY: `window.len() == Scannable::size(target)`.
                         if unsafe { (mode.eq)(target, window) } {
@@ -294,7 +297,7 @@ impl<T: Scannable> Scan<T> {
                 let locations = memory
                     .windows(low.len())
                     .enumerate()
-                    .step_by(mem::align_of::<T>())
+                    .step_by(low.len())
                     .flat_map(|(offset, window)| {
                         // SAFETY: `window.len() == Scannable::size(target)`.
                         if unsafe {
@@ -325,6 +328,7 @@ impl<T: Scannable> Scan<T> {
                 info,
                 locations: CandidateLocations::Dense {
                     range: base..base + info.RegionSize,
+                    step: *size,
                 },
                 value: Value::AnyWithin {
                     memory,
@@ -336,6 +340,7 @@ impl<T: Scannable> Scan<T> {
                 info,
                 locations: CandidateLocations::Dense {
                     range: base..base + info.RegionSize,
+                    step: value.mem_view().len(),
                 },
                 value: Value::AnyWithin {
                     memory,
@@ -367,7 +372,7 @@ impl<T: Scannable> Scan<T> {
         let mut locations = CandidateLocations::Discrete {
             locations: region
                 .locations
-                .iter::<T>()
+                .iter()
                 .flat_map(|addr| {
                     let old = region.value_at(addr);
                     let base = addr - region.info.BaseAddress as usize;
@@ -381,7 +386,7 @@ impl<T: Scannable> Scan<T> {
                 })
                 .collect(),
         };
-        locations.try_compact::<T>();
+        locations.try_compact(size);
 
         Region {
             info: region.info.clone(),
@@ -556,13 +561,13 @@ impl CandidateLocations {
         match self {
             CandidateLocations::Discrete { locations } => locations.len(),
             CandidateLocations::SmallDiscrete { offsets, .. } => offsets.len(),
-            CandidateLocations::Dense { range } => range.len(),
+            CandidateLocations::Dense { range, step } => range.len() / step,
             CandidateLocations::Sparse { mask, .. } => mask.iter().filter(|x| **x).count(),
         }
     }
 
     /// Tries to compact the candidate locations into a more efficient representation.
-    pub fn try_compact<T>(&mut self) {
+    pub fn try_compact(&mut self, value_size: usize) {
         let locations = match self {
             CandidateLocations::Discrete { locations } if locations.len() >= 2 => {
                 mem::take(locations)
@@ -574,7 +579,7 @@ impl CandidateLocations {
         let low = *locations.first().unwrap();
         let high = *locations.last().unwrap();
         let size = high - low;
-        let size_for_aligned = size / mem::align_of::<T>();
+        let size_for_aligned = size / value_size;
 
         // Can the entire region be represented with a base and 16-bit offsets?
         // And is it more worth than using a single byte per 4-byte aligned location?
@@ -593,14 +598,14 @@ impl CandidateLocations {
 
         // Would using a byte-mask for the entire region be more worth it?
         if size_for_aligned < locations.len() * mem::size_of::<usize>() {
-            assert_eq!(low % 4, 0);
+            assert_eq!(low % value_size, 0);
 
             let mut locations = locations.into_iter();
             let mut next_set = locations.next();
             *self = CandidateLocations::Sparse {
                 base: low,
                 mask: (low..high)
-                    .step_by(mem::align_of::<T>())
+                    .step_by(value_size)
                     .map(|addr| {
                         if Some(addr) == next_set {
                             next_set = locations.next();
@@ -610,6 +615,7 @@ impl CandidateLocations {
                         }
                     })
                     .collect(),
+                scale: value_size,
             };
             return;
         }
@@ -620,20 +626,18 @@ impl CandidateLocations {
     }
 
     /// Return a iterator over the locations.
-    pub fn iter<'a, T>(&'a self) -> Box<dyn Iterator<Item = usize> + 'a> {
+    pub fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = usize> + 'a> {
         match self {
             CandidateLocations::Discrete { locations } => Box::new(locations.iter().copied()),
             CandidateLocations::SmallDiscrete { base, offsets } => {
                 Box::new(offsets.iter().map(move |&offset| base + offset as usize))
             }
-            CandidateLocations::Dense { range } => {
-                Box::new(range.clone().step_by(mem::align_of::<T>()))
-            }
-            CandidateLocations::Sparse { base, mask } => Box::new(
+            CandidateLocations::Dense { range, step } => Box::new(range.clone().step_by(*step)),
+            CandidateLocations::Sparse { base, mask, scale } => Box::new(
                 mask.iter()
                     .enumerate()
                     .filter(|(_, &set)| set)
-                    .map(move |(i, _)| base + i * 4),
+                    .map(move |(i, _)| base + i * scale),
             ),
         }
     }
@@ -733,8 +737,9 @@ mod candidate_location_tests {
         // Dense
         let mut locations = CandidateLocations::Dense {
             range: 0x2000..0x2100,
+            step: 4,
         };
-        locations.try_compact::<i32>();
+        locations.try_compact(4);
         assert!(matches!(locations, CandidateLocations::Dense { .. }));
 
         // Already compacted
@@ -742,14 +747,15 @@ mod candidate_location_tests {
             base: 0x2000,
             offsets: vec![0, 0x20, 0x40],
         };
-        locations.try_compact::<i32>();
+        locations.try_compact(4);
         assert!(matches!(locations, CandidateLocations::SmallDiscrete { .. }));
 
         let mut locations = CandidateLocations::Sparse {
             base: 0x2000,
             mask: vec![true, false, false, false],
+            scale: 4,
         };
-        locations.try_compact::<i32>();
+        locations.try_compact(4);
         assert!(matches!(locations, CandidateLocations::Sparse { .. }));
     }
 
@@ -760,7 +766,7 @@ mod candidate_location_tests {
             locations: vec![0x2000],
         };
         let original = locations.clone();
-        locations.try_compact::<i32>();
+        locations.try_compact(4);
         assert_eq!(locations, original);
 
         // Too sparse and too large to fit in `SmallDiscrete`.
@@ -768,7 +774,7 @@ mod candidate_location_tests {
             locations: vec![0x2000, 0x42000],
         };
         let original = locations.clone();
-        locations.try_compact::<i32>();
+        locations.try_compact(4);
         assert_eq!(locations, original);
     }
 
@@ -777,7 +783,7 @@ mod candidate_location_tests {
         let mut locations = CandidateLocations::Discrete {
             locations: vec![0x2000, 0x2004, 0x2040],
         };
-        locations.try_compact::<i32>();
+        locations.try_compact(4);
         assert_eq!(
             locations,
             CandidateLocations::SmallDiscrete {
@@ -794,12 +800,13 @@ mod candidate_location_tests {
                 0x2000, 0x2004, 0x200c, 0x2010, 0x2014, 0x2018, 0x201c, 0x2020,
             ],
         };
-        locations.try_compact::<i32>();
+        locations.try_compact(4);
         assert_eq!(
             locations,
             CandidateLocations::Sparse {
                 base: 0x2000,
                 mask: vec![true, true, false, true, true, true, true, true],
+                scale: 4,
             }
         );
     }
@@ -810,7 +817,7 @@ mod candidate_location_tests {
             locations: vec![0x2000, 0x2004, 0x200c],
         };
         assert_eq!(
-            locations.iter::<i32>().collect::<Vec<_>>(),
+            locations.iter().collect::<Vec<_>>(),
             vec![0x2000, 0x2004, 0x200c]
         );
     }
@@ -822,7 +829,7 @@ mod candidate_location_tests {
             offsets: vec![0x0000, 0x0004, 0x000c],
         };
         assert_eq!(
-            locations.iter::<i32>().collect::<Vec<_>>(),
+            locations.iter().collect::<Vec<_>>(),
             vec![0x2000, 0x2004, 0x200c]
         );
     }
@@ -831,9 +838,10 @@ mod candidate_location_tests {
     fn iter_dense() {
         let locations = CandidateLocations::Dense {
             range: 0x2000..0x2010,
+            step: 4,
         };
         assert_eq!(
-            locations.iter::<i32>().collect::<Vec<_>>(),
+            locations.iter().collect::<Vec<_>>(),
             vec![0x2000, 0x2004, 0x2008, 0x200c]
         );
     }
@@ -843,9 +851,10 @@ mod candidate_location_tests {
         let locations = CandidateLocations::Sparse {
             base: 0x2000,
             mask: vec![true, true, false, true],
+            scale: 4,
         };
         assert_eq!(
-            locations.iter::<i32>().collect::<Vec<_>>(),
+            locations.iter().collect::<Vec<_>>(),
             vec![0x2000, 0x2004, 0x200c]
         );
     }
