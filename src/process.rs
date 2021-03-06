@@ -220,3 +220,32 @@ impl Drop for Process {
         assert_ne!(ret, FALSE);
     }
 }
+
+pub struct DebugToken {
+    pid: u32,
+}
+
+/// Attach the current process (the debugger) to the process with the corresponding identifier
+/// (the debuggee).
+pub fn debug(pid: u32) -> io::Result<DebugToken> {
+    // SAFETY: the call doesn't have dangerous side-effects.
+    if unsafe { winapi::um::debugapi::DebugActiveProcess(pid) } == FALSE {
+        return Err(io::Error::last_os_error());
+    };
+    let token = DebugToken { pid };
+
+    // Avoid killing the debuggee if the debugger dies.
+    if unsafe { winapi::um::winbase::DebugSetProcessKillOnExit(FALSE) } == FALSE {
+        return Err(io::Error::last_os_error());
+    };
+
+    Ok(token)
+}
+
+impl Drop for DebugToken {
+    fn drop(&mut self) {
+        // SAFETY: the token is only created if debugging succeeded.
+        let ret = unsafe { winapi::um::debugapi::DebugActiveProcessStop(self.pid) };
+        assert_ne!(ret, FALSE);
+    }
+}
