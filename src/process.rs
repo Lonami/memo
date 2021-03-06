@@ -2,7 +2,7 @@ use crate::scan::{Region, Scan, Scannable};
 use std::convert::TryInto;
 use std::io;
 use std::mem::{self, MaybeUninit};
-use std::ptr::NonNull;
+use std::ptr::{self, NonNull};
 use std::time::Duration;
 use winapi::ctypes::c_void;
 use winapi::shared::minwindef::{DWORD, FALSE, HMODULE};
@@ -213,6 +213,25 @@ impl Process {
             })
             .collect()
     }
+
+    /// Flushes the instruction cache.
+    ///
+    /// Should be called when writing to memory regions that contain code.
+    pub fn flush_instruction_cache(&self) -> io::Result<()> {
+        // SAFETY: the call doesn't have dangerous side-effects.
+        if unsafe {
+            winapi::um::processthreadsapi::FlushInstructionCache(
+                self.handle.as_ptr(),
+                ptr::null(),
+                0,
+            )
+        } == FALSE
+        {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl Drop for Process {
@@ -270,15 +289,6 @@ impl DebugToken {
         event: winapi::um::minwinbase::DEBUG_EVENT,
         handled: bool,
     ) -> io::Result<()> {
-        dbg!(
-            event.dwProcessId,
-            event.dwThreadId,
-            if handled {
-                winapi::um::winnt::DBG_CONTINUE
-            } else {
-                winapi::um::winnt::DBG_EXCEPTION_NOT_HANDLED
-            },
-        );
         // SAFETY: the call doesn't have dangerous side-effects.
         if unsafe {
             winapi::um::debugapi::ContinueDebugEvent(

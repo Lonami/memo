@@ -93,9 +93,23 @@ fn main() {
             threads.iter_mut().for_each(|thread| {
                 thread.watch_memory_write(addr).unwrap();
             });
-            let event = debugger.wait_event(None).unwrap();
-            debugger.cont(event, true).unwrap();
-            std::thread::sleep(std::time::Duration::from_secs(10));
+            loop {
+                let event = debugger.wait_event(None).unwrap();
+                if event.dwDebugEventCode == 1 {
+                    let exc = unsafe { event.u.Exception() };
+                    if exc.ExceptionRecord.ExceptionCode == 2147483652 {
+                        let addr = exc.ExceptionRecord.ExceptionAddress as usize;
+                        match process.write_memory(addr - 2, &[0x90, 0x90]) {
+                            Ok(_) => eprintln!("Patched [{:x}] with NOP", addr),
+                            Err(e) => eprintln!("Failed to patch [{:x}] with NOP: {}", addr, e),
+                        };
+                        process.flush_instruction_cache().unwrap();
+                        debugger.cont(event, true).unwrap();
+                        break;
+                    }
+                }
+                debugger.cont(event, true).unwrap();
+            }
         })
     });
 
