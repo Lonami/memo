@@ -1,10 +1,12 @@
 mod process;
 mod scan;
+mod thread;
 mod ui;
 
 use process::Process;
 use scan::{Scan, Scannable};
 use std::fmt;
+use thread::Thread;
 use winapi::um::winnt;
 
 /// Environment variable with the process identifier of the process to work with.
@@ -42,6 +44,17 @@ fn main() {
             let item = ui::list_picker(&processes);
             item.pid
         });
+
+    let threads = thread::enum_threads(pid)
+        .unwrap()
+        .into_iter()
+        .map(Thread::open)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    threads
+        .iter()
+        .for_each(|thread| println!("Opened thread {}", thread.tid()));
 
     let process = Process::open(pid).unwrap();
     println!("Opened process {:?}", process);

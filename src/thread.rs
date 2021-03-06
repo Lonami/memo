@@ -1,3 +1,16 @@
+use std::io;
+use std::mem::{self};
+use std::ptr::NonNull;
+use winapi::ctypes::c_void;
+use winapi::shared::minwindef::{DWORD, FALSE};
+
+/// A handle to an opened thread.
+#[derive(Debug)]
+pub struct Thread {
+    tid: u32,
+    handle: NonNull<c_void>,
+}
+
 #[derive(Debug)]
 pub struct Toolhelp {
     handle: winapi::um::winnt::HANDLE,
@@ -11,6 +24,7 @@ impl Drop for Toolhelp {
     }
 }
 
+/// Enumerate the thread identifiers owned by the specified process.
 pub fn enum_threads(pid: u32) -> io::Result<Vec<u32>> {
     const ENTRY_SIZE: u32 = mem::size_of::<winapi::um::tlhelp32::THREADENTRY32>() as u32;
 
@@ -53,4 +67,33 @@ pub fn enum_threads(pid: u32) -> io::Result<Vec<u32>> {
     }
 
     Ok(result)
+}
+
+impl Thread {
+    /// Open a thread handle given its thread identifier.
+    pub fn open(tid: u32) -> io::Result<Self> {
+        // SAFETY: the call doesn't have dangerous side-effects
+        NonNull::new(unsafe {
+            winapi::um::processthreadsapi::OpenThread(
+                winapi::um::winnt::THREAD_SUSPEND_RESUME,
+                FALSE,
+                tid,
+            )
+        })
+        .map(|handle| Self { tid, handle })
+        .ok_or_else(io::Error::last_os_error)
+    }
+
+    /// Return the thread identifier.
+    pub fn tid(&self) -> u32 {
+        self.tid
+    }
+}
+
+impl Drop for Thread {
+    fn drop(&mut self) {
+        // SAFETY: the handle is valid and non-null
+        let ret = unsafe { winapi::um::handleapi::CloseHandle(self.handle.as_mut()) };
+        assert_ne!(ret, FALSE);
+    }
 }
