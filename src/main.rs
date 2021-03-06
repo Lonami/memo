@@ -43,8 +43,6 @@ fn main() {
             item.pid
         });
 
-    dbg!(process::enum_threads(pid));
-
     let process = Process::open(pid).unwrap();
     println!("Opened process {:?}", process);
 
