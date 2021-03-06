@@ -98,12 +98,10 @@ fn main() {
                 if event.dwDebugEventCode == 1 {
                     let exc = unsafe { event.u.Exception() };
                     if exc.ExceptionRecord.ExceptionCode == 2147483652 {
-                        let addr = exc.ExceptionRecord.ExceptionAddress as usize;
-                        match process.write_memory(addr - 2, &[0x90, 0x90]) {
-                            Ok(_) => eprintln!("Patched [{:x}] with NOP", addr),
-                            Err(e) => eprintln!("Failed to patch [{:x}] with NOP: {}", addr, e),
-                        };
-                        process.flush_instruction_cache().unwrap();
+                        process
+                            .nop_last_instruction(exc.ExceptionRecord.ExceptionAddress as usize)
+                            .unwrap();
+
                         debugger.cont(event, true).unwrap();
                         break;
                     }

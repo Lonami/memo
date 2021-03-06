@@ -232,6 +232,44 @@ impl Process {
             Ok(())
         }
     }
+
+    /// Parse the instructions in the memory region containing the given address.
+    ///
+    /// Fails if the address is not within any valid region, the region can't be read, the region
+    /// cannot be decoded, or the patch cannot be applied.
+    #[cfg(feature = "patch-nops")]
+    pub fn nop_last_instruction(&self, addr: usize) -> io::Result<()> {
+        use iced_x86::{Decoder, DecoderOptions, Formatter, Instruction, NasmFormatter};
+
+        let region = self
+            .memory_regions()
+            .into_iter()
+            .find(|region| {
+                let base = region.BaseAddress as usize;
+                base <= addr && addr < base + region.RegionSize
+            })
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no matching region found"))?;
+
+        let bytes = self.read_memory(region.BaseAddress as usize, region.RegionSize)?;
+
+        let mut decoder = Decoder::new(64, &bytes, DecoderOptions::NONE);
+        decoder.set_ip(region.BaseAddress as _);
+
+        let mut instruction = Instruction::default();
+        while decoder.can_decode() {
+            decoder.decode_out(&mut instruction);
+            if instruction.next_ip() as usize == addr {
+                return self
+                    .write_memory(instruction.ip() as usize, &vec![0x90; instruction.len()])
+                    .map(drop);
+            }
+        }
+
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "no matching instruction found",
+        ))
+    }
 }
 
 impl Drop for Process {
