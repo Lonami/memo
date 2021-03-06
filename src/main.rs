@@ -79,6 +79,7 @@ fn main() {
         );
     }
 
+    let debugger = process::debug(pid).unwrap();
     let mut threads = thread::enum_threads(pid)
         .unwrap()
         .into_iter()
@@ -93,6 +94,7 @@ fn main() {
                 thread.watch_memory_write(addr).unwrap();
             });
             std::thread::sleep(std::time::Duration::from_secs(10));
+            dbg!(debugger.wait_event(None).unwrap().dwDebugEventCode);
         })
     });
 

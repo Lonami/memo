@@ -1,7 +1,9 @@
 use crate::scan::{Region, Scan, Scannable};
+use std::convert::TryInto;
 use std::io;
 use std::mem::{self, MaybeUninit};
 use std::ptr::NonNull;
+use std::time::Duration;
 use winapi::ctypes::c_void;
 use winapi::shared::minwindef::{DWORD, FALSE, HMODULE};
 use winapi::um::winnt;
@@ -240,6 +242,28 @@ pub fn debug(pid: u32) -> io::Result<DebugToken> {
     };
 
     Ok(token)
+}
+
+impl DebugToken {
+    pub fn wait_event(
+        &self,
+        timeout: Option<Duration>,
+    ) -> io::Result<winapi::um::minwinbase::DEBUG_EVENT> {
+        let mut result = MaybeUninit::uninit();
+        let timeout = timeout
+            .map(|d| d.as_millis().try_into().ok())
+            .flatten()
+            .unwrap_or(winapi::um::winbase::INFINITE);
+
+        // SAFETY: can only wait for events with a token, so the debugger is active.
+        if unsafe { winapi::um::debugapi::WaitForDebugEvent(result.as_mut_ptr(), timeout) } == FALSE
+        {
+            Err(io::Error::last_os_error())
+        } else {
+            // SAFETY: the call returned non-zero, so the structure is initialized.
+            Ok(unsafe { result.assume_init() })
+        }
+    }
 }
 
 impl Drop for DebugToken {
