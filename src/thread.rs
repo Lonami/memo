@@ -77,6 +77,7 @@ impl Thread {
             winapi::um::processthreadsapi::OpenThread(
                 winapi::um::winnt::THREAD_SUSPEND_RESUME
                     | winapi::um::winnt::THREAD_GET_CONTEXT
+                    | winapi::um::winnt::THREAD_SET_CONTEXT
                     | winapi::um::winnt::THREAD_QUERY_INFORMATION,
                 FALSE,
                 tid,
@@ -149,6 +150,7 @@ impl Thread {
         }
     }
 
+    /// Watch the memory at the given address for changes.
     pub fn watch_memory_write(&self, addr: usize) -> io::Result<()> {
         let mut context = self.get_context()?;
         context.Dr0 = addr as u64;
