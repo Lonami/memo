@@ -134,6 +134,28 @@ impl Thread {
             Ok(context)
         }
     }
+
+    /// Set the current thread context.
+    ///
+    /// The thread should be suspended before calling this function, or it will fail.
+    pub fn set_context(&self, context: &winapi::um::winnt::CONTEXT) -> io::Result<()> {
+        // SAFETY: the handle is valid and structure points to valid memory.
+        if unsafe { winapi::um::processthreadsapi::SetThreadContext(self.handle.as_ptr(), context) }
+            == FALSE
+        {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn watch_memory_write(&self, addr: usize) -> io::Result<()> {
+        let mut context = self.get_context()?;
+        context.Dr0 = addr as u64;
+        context.Dr7 = 0x00000000000d0001;
+        self.set_context(&context)?;
+        todo!()
+    }
 }
 
 impl Drop for Thread {
