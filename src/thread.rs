@@ -156,7 +156,7 @@ impl Thread {
         context.Dr0 = addr as u64;
         context.Dr7 = 0x00000000000d0001;
         self.set_context(&context)?;
-        todo!()
+        Ok(())
     }
 }
 

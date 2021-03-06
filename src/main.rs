@@ -45,26 +45,6 @@ fn main() {
             item.pid
         });
 
-    let mut threads = thread::enum_threads(pid)
-        .unwrap()
-        .into_iter()
-        .map(Thread::open)
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-
-    threads.iter_mut().for_each(|thread| {
-        println!("Pausing thread {} for 10 seconds…", thread.tid());
-        thread.suspend().unwrap();
-
-        let context = thread.get_context().unwrap();
-        println!("Dr0: {:016x}", context.Dr0);
-        println!("Dr7: {:016x}", context.Dr7);
-        println!("Dr6: {:016x}", context.Dr6);
-
-        println!("Wake up, {}!", thread.tid());
-        thread.resume().unwrap();
-    });
-
     let process = Process::open(pid).unwrap();
     println!("Opened process {:?}", process);
 
@@ -99,6 +79,24 @@ fn main() {
         );
     }
 
+    let mut threads = thread::enum_threads(pid)
+        .unwrap()
+        .into_iter()
+        .map(Thread::open)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    last_scan.into_iter().for_each(|region| {
+        region.locations.iter().for_each(|addr| {
+            println!("Watching writes to {:x} for 10s", addr);
+            threads.iter_mut().for_each(|thread| {
+                thread.watch_memory_write(addr).unwrap();
+            });
+            std::thread::sleep(std::time::Duration::from_secs(10));
+        })
+    });
+
+    /*
     let scan = ui::prompt::<Scan<Box<dyn Scannable>>>("Enter new memory value: ");
     let new_value = match &scan {
         Ok(Scan::Exact(value)) => value.mem_view(),
@@ -112,4 +110,5 @@ fn main() {
             };
         })
     });
+    */
 }
