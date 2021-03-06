@@ -45,16 +45,22 @@ fn main() {
             item.pid
         });
 
-    let threads = thread::enum_threads(pid)
+    let mut threads = thread::enum_threads(pid)
         .unwrap()
         .into_iter()
         .map(Thread::open)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    threads
-        .iter()
-        .for_each(|thread| println!("Opened thread {}", thread.tid()));
+    threads.iter_mut().for_each(|thread| {
+        println!("Pausing thread {} for 10 seconds…", thread.tid());
+        thread.suspend().unwrap();
+
+        std::thread::sleep(std::time::Duration::from_secs(10));
+
+        println!("Wake up, {}!", thread.tid());
+        thread.resume().unwrap();
+    });
 
     let process = Process::open(pid).unwrap();
     println!("Opened process {:?}", process);

@@ -88,6 +88,30 @@ impl Thread {
     pub fn tid(&self) -> u32 {
         self.tid
     }
+
+    /// Suspend the execution of this thread until it's resumed later.
+    ///
+    /// Returns the previous suspend count.
+    pub fn suspend(&mut self) -> io::Result<usize> {
+        // SAFETY: the handle is valid.
+        let ret = unsafe { winapi::um::processthreadsapi::SuspendThread(self.handle.as_ptr()) };
+        if ret == -1i32 as u32 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(ret as usize)
+        }
+    }
+
+    /// Resumes the execution of this thread after it was suspended.
+    pub fn resume(&mut self) -> io::Result<usize> {
+        // SAFETY: the handle is valid.
+        let ret = unsafe { winapi::um::processthreadsapi::ResumeThread(self.handle.as_ptr()) };
+        if ret == -1i32 as u32 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(ret as usize)
+        }
+    }
 }
 
 impl Drop for Thread {
