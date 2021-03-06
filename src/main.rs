@@ -56,6 +56,15 @@ fn main() {
         println!("Pausing thread {} for 10 seconds…", thread.tid());
         thread.suspend().unwrap();
 
+        let context = thread.get_context().unwrap();
+        println!("Dr0: {:016x}", context.Dr0);
+        println!("Dr7: {:016x}", context.Dr7);
+        println!("Dr6: {:016x}", context.Dr6);
+        println!("Rax: {:016x}", context.Rax);
+        println!("Rbx: {:016x}", context.Rbx);
+        println!("Rcx: {:016x}", context.Rcx);
+        println!("Rip: {:016x}", context.Rip);
+
         std::thread::sleep(std::time::Duration::from_secs(10));
 
         println!("Wake up, {}!", thread.tid());

@@ -1,5 +1,5 @@
 use std::io;
-use std::mem::{self};
+use std::mem::{self, MaybeUninit};
 use std::ptr::NonNull;
 use winapi::ctypes::c_void;
 use winapi::shared::minwindef::{DWORD, FALSE};
@@ -75,7 +75,9 @@ impl Thread {
         // SAFETY: the call doesn't have dangerous side-effects
         NonNull::new(unsafe {
             winapi::um::processthreadsapi::OpenThread(
-                winapi::um::winnt::THREAD_SUSPEND_RESUME,
+                winapi::um::winnt::THREAD_SUSPEND_RESUME
+                    | winapi::um::winnt::THREAD_GET_CONTEXT
+                    | winapi::um::winnt::THREAD_QUERY_INFORMATION,
                 FALSE,
                 tid,
             )
@@ -110,6 +112,26 @@ impl Thread {
             Err(io::Error::last_os_error())
         } else {
             Ok(ret as usize)
+        }
+    }
+
+    /// Get the current thread context.
+    ///
+    /// The thread should be suspended before calling this function, or it will fail.
+    pub fn get_context(&self) -> io::Result<winapi::um::winnt::CONTEXT> {
+        let context = MaybeUninit::<winapi::um::winnt::CONTEXT>::zeroed();
+        // SAFETY: it's a C struct, and all-zero is a valid bit-pattern for the type.
+        let mut context = unsafe { context.assume_init() };
+        context.ContextFlags = winapi::um::winnt::CONTEXT_ALL;
+
+        // SAFETY: the handle is valid and structure points to valid memory.
+        if unsafe {
+            winapi::um::processthreadsapi::GetThreadContext(self.handle.as_ptr(), &mut context)
+        } == FALSE
+        {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(context)
         }
     }
 }
