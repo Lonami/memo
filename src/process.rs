@@ -264,6 +264,39 @@ impl DebugToken {
             Ok(unsafe { result.assume_init() })
         }
     }
+
+    pub fn cont(
+        &self,
+        event: winapi::um::minwinbase::DEBUG_EVENT,
+        handled: bool,
+    ) -> io::Result<()> {
+        dbg!(
+            event.dwProcessId,
+            event.dwThreadId,
+            if handled {
+                winapi::um::winnt::DBG_CONTINUE
+            } else {
+                winapi::um::winnt::DBG_EXCEPTION_NOT_HANDLED
+            },
+        );
+        // SAFETY: the call doesn't have dangerous side-effects.
+        if unsafe {
+            winapi::um::debugapi::ContinueDebugEvent(
+                event.dwProcessId,
+                event.dwThreadId,
+                if handled {
+                    winapi::um::winnt::DBG_CONTINUE
+                } else {
+                    winapi::um::winnt::DBG_EXCEPTION_NOT_HANDLED
+                },
+            )
+        } == FALSE
+        {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl Drop for DebugToken {

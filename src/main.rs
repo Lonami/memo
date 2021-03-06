@@ -93,8 +93,9 @@ fn main() {
             threads.iter_mut().for_each(|thread| {
                 thread.watch_memory_write(addr).unwrap();
             });
+            let event = debugger.wait_event(None).unwrap();
+            debugger.cont(event, true).unwrap();
             std::thread::sleep(std::time::Duration::from_secs(10));
-            dbg!(debugger.wait_event(None).unwrap().dwDebugEventCode);
         })
     });
 
