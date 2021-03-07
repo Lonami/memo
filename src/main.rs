@@ -7,7 +7,6 @@ mod ui;
 use process::Process;
 use scan::{Scan, Scannable};
 use std::fmt;
-use thread::Thread;
 use winapi::um::winnt;
 
 /// Environment variable with the process identifier of the process to work with.
@@ -80,11 +79,25 @@ fn main() {
         );
     }
 
+    if !maybe_do_nop_instructions(pid, &last_scan, &process) {
+        do_change_value(last_scan, process);
+    }
+}
+
+#[cfg(feature = "patch-nops")]
+fn maybe_do_nop_instructions(pid: u32, last_scan: &[scan::Region], process: &Process) -> bool {
+    let action =
+        ui::prompt::<String>("Do you want to NOP the writes to those locations (y/n)?: ").unwrap();
+
+    if action != "y" && action != "Y" {
+        return false;
+    }
+
     let debugger = debug::debug(pid).unwrap();
     let mut threads = thread::enum_threads(pid)
         .unwrap()
         .into_iter()
-        .map(Thread::open)
+        .map(thread::Thread::open)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
@@ -112,7 +125,15 @@ fn main() {
         })
     });
 
-    /*
+    true
+}
+
+#[cfg(not(feature = "patch-nops"))]
+fn maybe_do_nop_instructions(_pid: u32, _last_scan: &[scan::Region], _process: &Process) -> bool {
+    false
+}
+
+fn do_change_value(last_scan: Vec<scan::Region>, process: Process) {
     let scan = ui::prompt::<Scan<Box<dyn Scannable>>>("Enter new memory value: ");
     let new_value = match &scan {
         Ok(Scan::Exact(value)) => value.mem_view(),
@@ -126,5 +147,4 @@ fn main() {
             };
         })
     });
-    */
 }
