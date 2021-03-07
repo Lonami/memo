@@ -1,8 +1,8 @@
-mod debug;
-mod process;
-mod scan;
-mod thread;
-mod ui;
+pub mod debug;
+pub mod process;
+pub mod scan;
+pub mod thread;
+pub mod ui;
 
 use process::Process;
 use scan::{Scan, Scannable};
