@@ -11,6 +11,11 @@ pub struct Thread {
     handle: NonNull<c_void>,
 }
 
+#[must_use]
+pub struct Watchpoint<'a> {
+    thread: &'a Thread,
+}
+
 #[derive(Debug)]
 pub struct Toolhelp {
     handle: winapi::um::winnt::HANDLE,
@@ -151,12 +156,17 @@ impl Thread {
     }
 
     /// Watch the memory at the given address for changes.
-    pub fn watch_memory_write(&self, addr: usize) -> io::Result<()> {
+    ///
+    /// Note that if there is no debugger attached, the exception will likely crash the thread,
+    /// so it is recommended to debug the corresponding process before using this method.
+    ///
+    /// The watchpoint will be reset on drop, so the result must be used.
+    pub fn watch_memory_write<'a>(&'a self, addr: usize) -> io::Result<Watchpoint<'a>> {
         let mut context = self.get_context()?;
         context.Dr0 = addr as u64;
         context.Dr7 = 0x00000000000d0001;
         self.set_context(&context)?;
-        Ok(())
+        Ok(Watchpoint { thread: self })
     }
 }
 
@@ -165,5 +175,22 @@ impl Drop for Thread {
         // SAFETY: the handle is valid and non-null
         let ret = unsafe { winapi::um::handleapi::CloseHandle(self.handle.as_mut()) };
         assert_ne!(ret, FALSE);
+    }
+}
+
+impl<'a> Drop for Watchpoint<'a> {
+    fn drop(&mut self) {
+        match self.thread.get_context() {
+            Ok(mut context) => {
+                context.Dr0 = 0;
+                context.Dr7 = 0;
+                if let Err(e) = self.thread.set_context(&context) {
+                    eprintln!("failed to reset debug register on watchpoint drop: {}", e);
+                }
+            }
+            Err(e) => {
+                eprintln!("failed to reset debug register on watchpoint drop: {}", e);
+            }
+        }
     }
 }

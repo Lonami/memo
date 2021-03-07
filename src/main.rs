@@ -104,9 +104,12 @@ fn maybe_do_nop_instructions(pid: u32, last_scan: &[scan::Region], process: &Pro
     last_scan.into_iter().for_each(|region| {
         region.locations.iter().for_each(|addr| {
             println!("Watching writes to {:x} for 10s", addr);
-            threads.iter_mut().for_each(|thread| {
-                thread.watch_memory_write(addr).unwrap();
-            });
+            let _watchpoints = threads
+                .iter_mut()
+                .map(|thread| {
+                    thread.watch_memory_write(addr).unwrap();
+                })
+                .collect::<Vec<_>>();
             loop {
                 let event = debugger.wait_event(None).unwrap();
                 if event.dwDebugEventCode == 1 {
