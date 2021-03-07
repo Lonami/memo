@@ -1,3 +1,4 @@
+mod debug;
 mod process;
 mod scan;
 mod thread;
@@ -79,7 +80,7 @@ fn main() {
         );
     }
 
-    let debugger = process::debug(pid).unwrap();
+    let debugger = debug::debug(pid).unwrap();
     let mut threads = thread::enum_threads(pid)
         .unwrap()
         .into_iter()
