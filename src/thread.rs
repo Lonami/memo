@@ -271,6 +271,7 @@ impl Drop for Thread {
 
 impl<'a> Drop for Breakpoint<'a> {
     fn drop(&mut self) {
+        let did_suspend = self.thread.suspend().is_ok();
         match self.thread.get_context() {
             Ok(mut context) => {
                 context.Dr7 &= self.clear_mask;
@@ -281,6 +282,9 @@ impl<'a> Drop for Breakpoint<'a> {
             Err(e) => {
                 eprintln!("failed to reset debug register on watchpoint drop: {}", e);
             }
+        }
+        if did_suspend {
+            drop(self.thread.resume());
         }
     }
 }
