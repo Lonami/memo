@@ -274,7 +274,7 @@ impl Process {
     /// cannot be decoded, or the patch cannot be applied.
     #[cfg(feature = "patch-nops")]
     pub fn nop_last_instruction(&self, addr: usize) -> io::Result<()> {
-        use iced_x86::{Decoder, DecoderOptions, Formatter, Instruction, NasmFormatter};
+        use iced_x86::{Decoder, DecoderOptions, Instruction};
 
         let region = self
             .memory_regions()
