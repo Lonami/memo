@@ -114,9 +114,11 @@ fn maybe_do_nop_instructions(pid: u32, last_scan: &[scan::Region], process: &Pro
                 .collect::<Vec<_>>();
             loop {
                 let event = debugger.wait_event(None).unwrap();
-                if event.dwDebugEventCode == 1 {
+                if event.dwDebugEventCode == winapi::um::minwinbase::EXCEPTION_DEBUG_EVENT {
                     let exc = unsafe { event.u.Exception() };
-                    if exc.ExceptionRecord.ExceptionCode == 2147483652 {
+                    if exc.ExceptionRecord.ExceptionCode
+                        == winapi::um::minwinbase::EXCEPTION_SINGLE_STEP
+                    {
                         process
                             .nop_last_instruction(exc.ExceptionRecord.ExceptionAddress as usize)
                             .unwrap();
