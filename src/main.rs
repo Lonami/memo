@@ -79,11 +79,104 @@ fn main() {
         );
     }
 
+    let debugger = debug::debug(pid).unwrap();
+    let mut threads = thread::enum_threads(pid)
+        .unwrap()
+        .into_iter()
+        .map(thread::Thread::open)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    last_scan.into_iter().for_each(|region| {
+        region.locations.iter().for_each(|addr| {
+            println!("Watching accesses to {:x}", addr);
+            let _watchpoints = threads
+                .iter_mut()
+                .map(|thread| {
+                    thread
+                        .add_breakpoint(addr, thread::Condition::Access, thread::Size::DoubleWord)
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            loop {
+                let event = debugger.wait_event(None).unwrap();
+                if event.dwDebugEventCode == winapi::um::minwinbase::EXCEPTION_DEBUG_EVENT {
+                    let exc = unsafe { event.u.Exception() };
+                    if exc.ExceptionRecord.ExceptionCode
+                        == winapi::um::minwinbase::EXCEPTION_SINGLE_STEP
+                    {
+                        use iced_x86::{
+                            Decoder, DecoderOptions, Formatter, Instruction, NasmFormatter,
+                        };
+
+                        let addr = exc.ExceptionRecord.ExceptionAddress as usize;
+                        let region = process
+                            .memory_regions()
+                            .into_iter()
+                            .find(|region| {
+                                let base = region.BaseAddress as usize;
+                                base <= addr && addr < base + region.RegionSize
+                            })
+                            .unwrap();
+
+                        let bytes = process
+                            .read_memory(region.BaseAddress as usize, region.RegionSize)
+                            .unwrap();
+
+                        let mut decoder = Decoder::new(64, &bytes, DecoderOptions::NONE);
+                        decoder.set_ip(region.BaseAddress as _);
+
+                        let mut formatter = NasmFormatter::new();
+                        let mut output = String::new();
+
+                        let instructions = decoder.into_iter().collect::<Vec<_>>();
+                        for (i, ins) in instructions.iter().enumerate() {
+                            if ins.next_ip() as usize == addr {
+                                let low = i.saturating_sub(5);
+                                let high = (i + 5).min(instructions.len());
+                                for j in low..high {
+                                    let ins = &instructions[j];
+                                    print!(
+                                        "{} {:016X} ",
+                                        if j == i { ">>>" } else { "   " },
+                                        ins.ip()
+                                    );
+                                    let k =
+                                        (ins.ip() - region.BaseAddress as usize as u64) as usize;
+                                    let instr_bytes = &bytes[k..k + ins.len()];
+                                    for b in instr_bytes.iter() {
+                                        print!("{:02X}", b);
+                                    }
+                                    if instr_bytes.len() < 10 {
+                                        for _ in 0..10usize.saturating_sub(instr_bytes.len()) {
+                                            print!("  ");
+                                        }
+                                    }
+
+                                    output.clear();
+                                    formatter.format(ins, &mut output);
+                                    println!(" {}", output);
+                                }
+                                break;
+                            }
+                        }
+                        debugger.cont(event, true).unwrap();
+                        break;
+                    }
+                }
+                debugger.cont(event, true).unwrap();
+            }
+        })
+    });
+
+    /*
     if !maybe_do_nop_instructions(pid, &last_scan, &process) {
         do_change_value(last_scan, process);
     }
+    */
 }
 
+/*
 #[cfg(feature = "patch-nops")]
 fn maybe_do_nop_instructions(pid: u32, last_scan: &[scan::Region], process: &Process) -> bool {
     let action =
@@ -155,3 +248,4 @@ fn do_change_value(last_scan: Vec<scan::Region>, process: Process) {
         })
     });
 }
+*/
