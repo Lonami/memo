@@ -53,29 +53,6 @@ fn main() {
         | winnt::PAGE_READWRITE
         | winnt::PAGE_WRITECOPY;
 
-    let mut bases = 0;
-    let modules = process.enum_modules().unwrap();
-    let regions = process.memory_regions();
-    regions.iter().for_each(|region| {
-        if modules.iter().any(|module| {
-            let base = region.BaseAddress as usize;
-            let addr = *module as usize;
-            base == addr
-        }) {
-            bases += 1;
-        }
-    });
-
-    println!(
-        "{}/{} regions have a module address within them",
-        bases,
-        regions.len()
-    );
-
-    if true {
-        return;
-    }
-
     let regions = process
         .memory_regions()
         .into_iter()
@@ -115,45 +92,17 @@ fn main() {
 
     last_scan.into_iter().for_each(|region| {
         region.locations.iter().for_each(|addr| {
-            eprintln!(
-                "HEALTH Region:
-                BaseAddress: {:?}
-                AllocationBase: {:?}
-                AllocationProtect: {:?}
-                RegionSize: {:?}
-                State: {:?}
-                Protect: {:?}
-                Type: {:?}",
-                region.info.BaseAddress,
-                region.info.AllocationBase,
-                region.info.AllocationProtect,
-                region.info.RegionSize,
-                region.info.State,
-                region.info.Protect,
-                region.info.Type,
-            );
             let scan = process.scan_regions(&regions, Scan::Exact(addr as u64));
-
+            drop(ui::prompt::<String>(
+                "Press enter to update the value through...",
+            ));
             scan.into_iter().for_each(|region| {
                 region.locations.iter().for_each(|ptr_addr| {
-                    eprintln!(
-                        "POINTER Region:
-                        BaseAddress: {:?}
-                        AllocationBase: {:?}
-                        AllocationProtect: {:?}
-                        RegionSize: {:?}
-                        State: {:?}
-                        Protect: {:?}
-                        Type: {:?}",
-                        region.info.BaseAddress,
-                        region.info.AllocationBase,
-                        region.info.AllocationProtect,
-                        region.info.RegionSize,
-                        region.info.State,
-                        region.info.Protect,
-                        region.info.Type,
-                    );
-                    println!("[{:x}] = {:x}", ptr_addr, addr);
+                    let addr = process.read_memory(ptr_addr, 8).unwrap();
+                    let addr = usize::from_ne_bytes([
+                        addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], addr[6], addr[7],
+                    ]);
+                    process.write_memory(addr, &5000i32.to_le_bytes()).unwrap();
                 });
             });
         });
