@@ -11,9 +11,36 @@ pub struct Thread {
     handle: NonNull<c_void>,
 }
 
+/// Breakpoint condition.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug)]
+pub enum Condition {
+    /// Break when attempting to execute at the specified address.
+    Execute = 0b00,
+    /// Break when attempting to write to the specified address.
+    Write = 0b01,
+    /// Break when attempting to read from or write to the specified address.
+    Access = 0b11,
+}
+
+/// Breakpoint size.
+#[derive(Clone, Copy, Debug)]
+#[repr(u8)]
+pub enum Size {
+    /// Watch a single byte in memory.
+    Byte = 0b00,
+    /// Watch two consecutive bytes in memory.
+    Word = 0b01,
+    /// Watch four consecutive bytes in memory.
+    DoubleWord = 0b11,
+    /// Watch eight consecutive bytes in memory.
+    QuadWord = 0b10,
+}
+
 #[must_use]
-pub struct Watchpoint<'a> {
+pub struct Breakpoint<'a> {
     thread: &'a Thread,
+    clear_mask: u64,
 }
 
 #[derive(Debug)]
@@ -155,18 +182,54 @@ impl Thread {
         }
     }
 
-    /// Watch the memory at the given address for changes.
+    /// Add a breakpoint at the given address.
+    ///
+    /// The condition determines when the breakpoint will trigger, and the size how much memory
+    /// should be watched.
     ///
     /// Note that if there is no debugger attached, the exception will likely crash the thread,
     /// so it is recommended to debug the corresponding process before using this method.
     ///
-    /// The watchpoint will be reset on drop, so the result must be used.
-    pub fn watch_memory_write<'a>(&'a self, addr: usize) -> io::Result<Watchpoint<'a>> {
+    /// The breakpoint will be reset on drop, so the result must be used.
+    pub fn add_breakpoint<'a>(
+        &'a self,
+        addr: usize,
+        cond: Condition,
+        size: Size,
+    ) -> io::Result<Breakpoint<'a>> {
         let mut context = self.get_context()?;
-        context.Dr0 = addr as u64;
-        context.Dr7 = 0x00000000000d0001;
+        let index = (0..4)
+            .find_map(|i| ((context.Dr7 & (0b11 << (i * 2))) == 0).then(|| i))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no debug register available"))?;
+
+        let addr = addr as u64;
+        match index {
+            0 => context.Dr0 = addr,
+            1 => context.Dr1 = addr,
+            2 => context.Dr2 = addr,
+            3 => context.Dr3 = addr,
+            _ => unreachable!(),
+        }
+
+        // Prepare clear mask (to clear on drop) and to make sure there's no garbage left in the
+        // condition or size bits.
+        let clear_mask = !((0b1111 << (16 + index * 4)) | (0b11 << (index * 2)));
+        context.Dr7 &= clear_mask;
+
+        // Enable corresponding local breakpoint (diagram represents 1 byte per cell).
+        // DR7 = [ .. | G3 | L3 | G2 | L2 | G1 | L1 | G0 | L0 ]
+        context.Dr7 |= 1 << (index * 2);
+
+        // Toggle the correct bits on conditon and size (diagram represents 2 bytes per cell).
+        // DR7 = [ .. | S3 |  C3 | S2 | C2 | S1 | C1 | S0 | C0 | .. ]
+        let sc = (((size as u8) << 2) | (cond as u8)) as u64;
+        context.Dr7 |= sc << (16 + index * 4);
+
         self.set_context(&context)?;
-        Ok(Watchpoint { thread: self })
+        Ok(Breakpoint {
+            thread: self,
+            clear_mask,
+        })
     }
 }
 
@@ -178,12 +241,11 @@ impl Drop for Thread {
     }
 }
 
-impl<'a> Drop for Watchpoint<'a> {
+impl<'a> Drop for Breakpoint<'a> {
     fn drop(&mut self) {
         match self.thread.get_context() {
             Ok(mut context) => {
-                context.Dr0 = 0;
-                context.Dr7 = 0;
+                context.Dr7 &= self.clear_mask;
                 if let Err(e) = self.thread.set_context(&context) {
                     eprintln!("failed to reset debug register on watchpoint drop: {}", e);
                 }
