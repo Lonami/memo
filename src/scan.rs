@@ -748,7 +748,10 @@ mod candidate_location_tests {
             offsets: vec![0, 0x20, 0x40],
         };
         locations.try_compact(4);
-        assert!(matches!(locations, CandidateLocations::SmallDiscrete { .. }));
+        assert!(matches!(
+            locations,
+            CandidateLocations::SmallDiscrete { .. }
+        ));
 
         let mut locations = CandidateLocations::Sparse {
             base: 0x2000,
