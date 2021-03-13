@@ -107,7 +107,9 @@ fn maybe_do_nop_instructions(pid: u32, last_scan: &[scan::Region], process: &Pro
             let _watchpoints = threads
                 .iter_mut()
                 .map(|thread| {
-                    thread.watch_memory_write(addr).unwrap();
+                    thread
+                        .add_breakpoint(addr, thread::Condition::Write, thread::Size::DoubleWord)
+                        .unwrap();
                 })
                 .collect::<Vec<_>>();
             loop {
