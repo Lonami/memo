@@ -104,6 +104,43 @@ impl Process {
         Ok(String::from_utf8(buffer).unwrap())
     }
 
+    pub fn enum_modules(&self) -> io::Result<Vec<winapi::shared::minwindef::HMODULE>> {
+        let mut size = 0;
+        // SAFETY: the pointer is valid and the indicated size is 0.
+        if unsafe {
+            winapi::um::psapi::EnumProcessModules(
+                self.handle.as_ptr(),
+                ptr::null_mut(),
+                0,
+                &mut size,
+            )
+        } == FALSE
+        {
+            return Err(io::Error::last_os_error());
+        }
+
+        let mut modules = Vec::with_capacity(size as usize / mem::size_of::<HMODULE>());
+        // SAFETY: the pointer is valid and the size is correct.
+        if unsafe {
+            winapi::um::psapi::EnumProcessModules(
+                self.handle.as_ptr(),
+                modules.as_mut_ptr(),
+                (modules.capacity() * mem::size_of::<HMODULE>()) as u32,
+                &mut size,
+            )
+        } == FALSE
+        {
+            return Err(io::Error::last_os_error());
+        }
+
+        // SAFETY: the call succeeded, so modules up to `size` are initialized.
+        unsafe {
+            modules.set_len(size as usize / mem::size_of::<HMODULE>());
+        }
+
+        Ok(modules)
+    }
+
     pub fn memory_regions(&self) -> Vec<MEMORY_BASIC_INFORMATION> {
         let mut base = 0;
         let mut regions = Vec::new();

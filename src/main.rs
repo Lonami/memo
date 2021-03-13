@@ -53,6 +53,29 @@ fn main() {
         | winnt::PAGE_READWRITE
         | winnt::PAGE_WRITECOPY;
 
+    let mut bases = 0;
+    let modules = process.enum_modules().unwrap();
+    let regions = process.memory_regions();
+    regions.iter().for_each(|region| {
+        if modules.iter().any(|module| {
+            let base = region.BaseAddress as usize;
+            let addr = *module as usize;
+            base == addr
+        }) {
+            bases += 1;
+        }
+    });
+
+    println!(
+        "{}/{} regions have a module address within them",
+        bases,
+        regions.len()
+    );
+
+    if true {
+        return;
+    }
+
     let regions = process
         .memory_regions()
         .into_iter()
