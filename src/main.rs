@@ -109,7 +109,7 @@ fn maybe_do_nop_instructions(pid: u32, last_scan: &[scan::Region], process: &Pro
                 .map(|thread| {
                     thread
                         .add_breakpoint(addr, thread::Condition::Write, thread::Size::DoubleWord)
-                        .unwrap();
+                        .unwrap()
                 })
                 .collect::<Vec<_>>();
             loop {
