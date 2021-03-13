@@ -79,43 +79,11 @@ fn main() {
         );
     }
 
-    let mask = winnt::PAGE_EXECUTE_READWRITE
-        | winnt::PAGE_EXECUTE_WRITECOPY
-        | winnt::PAGE_READWRITE
-        | winnt::PAGE_WRITECOPY;
-
-    let regions = process
-        .memory_regions()
-        .into_iter()
-        .filter(|p| (p.Protect & mask) != 0)
-        .collect::<Vec<_>>();
-
-    last_scan.into_iter().for_each(|region| {
-        region.locations.iter().for_each(|addr| {
-            let scan = process.scan_regions(&regions, Scan::Exact(addr as u64));
-            drop(ui::prompt::<String>(
-                "Press enter to update the value through...",
-            ));
-            scan.into_iter().for_each(|region| {
-                region.locations.iter().for_each(|ptr_addr| {
-                    let addr = process.read_memory(ptr_addr, 8).unwrap();
-                    let addr = usize::from_ne_bytes([
-                        addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], addr[6], addr[7],
-                    ]);
-                    process.write_memory(addr, &5000i32.to_le_bytes()).unwrap();
-                });
-            });
-        });
-    });
-
-    /*
     if !maybe_do_nop_instructions(pid, &last_scan, &process) {
         do_change_value(last_scan, process);
     }
-    */
 }
 
-/*
 #[cfg(feature = "patch-nops")]
 fn maybe_do_nop_instructions(pid: u32, last_scan: &[scan::Region], process: &Process) -> bool {
     let action =
@@ -187,4 +155,3 @@ fn do_change_value(last_scan: Vec<scan::Region>, process: Process) {
         })
     });
 }
-*/
