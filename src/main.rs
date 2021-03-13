@@ -79,94 +79,61 @@ fn main() {
         );
     }
 
-    let debugger = debug::debug(pid).unwrap();
-    let mut threads = thread::enum_threads(pid)
-        .unwrap()
+    let mask = winnt::PAGE_EXECUTE_READWRITE
+        | winnt::PAGE_EXECUTE_WRITECOPY
+        | winnt::PAGE_READWRITE
+        | winnt::PAGE_WRITECOPY;
+
+    let regions = process
+        .memory_regions()
         .into_iter()
-        .map(thread::Thread::open)
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+        .filter(|p| (p.Protect & mask) != 0)
+        .collect::<Vec<_>>();
 
     last_scan.into_iter().for_each(|region| {
         region.locations.iter().for_each(|addr| {
-            println!("Watching accesses to {:x}", addr);
-            let _watchpoints = threads
-                .iter_mut()
-                .map(|thread| {
-                    thread
-                        .add_breakpoint(addr, thread::Condition::Access, thread::Size::DoubleWord)
-                        .unwrap()
-                })
-                .collect::<Vec<_>>();
-            loop {
-                let event = debugger.wait_event(None).unwrap();
-                if event.dwDebugEventCode == winapi::um::minwinbase::EXCEPTION_DEBUG_EVENT {
-                    let exc = unsafe { event.u.Exception() };
-                    if exc.ExceptionRecord.ExceptionCode
-                        == winapi::um::minwinbase::EXCEPTION_SINGLE_STEP
-                    {
-                        use iced_x86::{
-                            Decoder, DecoderOptions, Formatter, Instruction, NasmFormatter,
-                        };
+            eprintln!(
+                "HEALTH Region:
+                BaseAddress: {:?}
+                AllocationBase: {:?}
+                AllocationProtect: {:?}
+                RegionSize: {:?}
+                State: {:?}
+                Protect: {:?}
+                Type: {:?}",
+                region.info.BaseAddress,
+                region.info.AllocationBase,
+                region.info.AllocationProtect,
+                region.info.RegionSize,
+                region.info.State,
+                region.info.Protect,
+                region.info.Type,
+            );
+            let scan = process.scan_regions(&regions, Scan::Exact(addr as u64));
 
-                        let addr = exc.ExceptionRecord.ExceptionAddress as usize;
-                        let region = process
-                            .memory_regions()
-                            .into_iter()
-                            .find(|region| {
-                                let base = region.BaseAddress as usize;
-                                base <= addr && addr < base + region.RegionSize
-                            })
-                            .unwrap();
-
-                        let bytes = process
-                            .read_memory(region.BaseAddress as usize, region.RegionSize)
-                            .unwrap();
-
-                        let mut decoder = Decoder::new(64, &bytes, DecoderOptions::NONE);
-                        decoder.set_ip(region.BaseAddress as _);
-
-                        let mut formatter = NasmFormatter::new();
-                        let mut output = String::new();
-
-                        let instructions = decoder.into_iter().collect::<Vec<_>>();
-                        for (i, ins) in instructions.iter().enumerate() {
-                            if ins.next_ip() as usize == addr {
-                                let low = i.saturating_sub(5);
-                                let high = (i + 5).min(instructions.len());
-                                for j in low..high {
-                                    let ins = &instructions[j];
-                                    print!(
-                                        "{} {:016X} ",
-                                        if j == i { ">>>" } else { "   " },
-                                        ins.ip()
-                                    );
-                                    let k =
-                                        (ins.ip() - region.BaseAddress as usize as u64) as usize;
-                                    let instr_bytes = &bytes[k..k + ins.len()];
-                                    for b in instr_bytes.iter() {
-                                        print!("{:02X}", b);
-                                    }
-                                    if instr_bytes.len() < 10 {
-                                        for _ in 0..10usize.saturating_sub(instr_bytes.len()) {
-                                            print!("  ");
-                                        }
-                                    }
-
-                                    output.clear();
-                                    formatter.format(ins, &mut output);
-                                    println!(" {}", output);
-                                }
-                                break;
-                            }
-                        }
-                        debugger.cont(event, true).unwrap();
-                        break;
-                    }
-                }
-                debugger.cont(event, true).unwrap();
-            }
-        })
+            scan.into_iter().for_each(|region| {
+                region.locations.iter().for_each(|ptr_addr| {
+                    eprintln!(
+                        "POINTER Region:
+                        BaseAddress: {:?}
+                        AllocationBase: {:?}
+                        AllocationProtect: {:?}
+                        RegionSize: {:?}
+                        State: {:?}
+                        Protect: {:?}
+                        Type: {:?}",
+                        region.info.BaseAddress,
+                        region.info.AllocationBase,
+                        region.info.AllocationProtect,
+                        region.info.RegionSize,
+                        region.info.State,
+                        region.info.Protect,
+                        region.info.Type,
+                    );
+                    println!("[{:x}] = {:x}", ptr_addr, addr);
+                });
+            });
+        });
     });
 
     /*
