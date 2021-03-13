@@ -37,6 +37,14 @@ pub enum Size {
     QuadWord = 0b10,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum DebugRegister {
+    Dr0,
+    Dr1,
+    Dr2,
+    Dr3,
+}
+
 #[must_use]
 pub struct Breakpoint<'a> {
     thread: &'a Thread,
@@ -198,38 +206,58 @@ impl Thread {
         size: Size,
     ) -> io::Result<Breakpoint<'a>> {
         let mut context = self.get_context()?;
-        let index = (0..4)
-            .find_map(|i| ((context.Dr7 & (0b11 << (i * 2))) == 0).then(|| i))
+        let (clear_mask, dr, dr7) = Breakpoint::update_dbg_control(context.Dr7, cond, size)
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no debug register available"))?;
 
         let addr = addr as u64;
-        match index {
-            0 => context.Dr0 = addr,
-            1 => context.Dr1 = addr,
-            2 => context.Dr2 = addr,
-            3 => context.Dr3 = addr,
-            _ => unreachable!(),
+        match dr {
+            DebugRegister::Dr0 => context.Dr0 = addr,
+            DebugRegister::Dr1 => context.Dr1 = addr,
+            DebugRegister::Dr2 => context.Dr2 = addr,
+            DebugRegister::Dr3 => context.Dr3 = addr,
         }
-
-        // Prepare clear mask (to clear on drop) and to make sure there's no garbage left in the
-        // condition or size bits.
-        let clear_mask = !((0b1111 << (16 + index * 4)) | (0b11 << (index * 2)));
-        context.Dr7 &= clear_mask;
-
-        // Enable corresponding local breakpoint (diagram represents 1 byte per cell).
-        // DR7 = [ .. | G3 | L3 | G2 | L2 | G1 | L1 | G0 | L0 ]
-        context.Dr7 |= 1 << (index * 2);
-
-        // Toggle the correct bits on conditon and size (diagram represents 2 bytes per cell).
-        // DR7 = [ .. | S3 |  C3 | S2 | C2 | S1 | C1 | S0 | C0 | .. ]
-        let sc = (((size as u8) << 2) | (cond as u8)) as u64;
-        context.Dr7 |= sc << (16 + index * 4);
+        context.Dr7 = dr7;
 
         self.set_context(&context)?;
         Ok(Breakpoint {
             thread: self,
             clear_mask,
         })
+    }
+}
+
+impl<'a> Breakpoint<'a> {
+    // Update DR7 to add a new breakpoint with the given parameters, or return `None` on failure.
+    fn update_dbg_control(
+        mut dr7: u64,
+        cond: Condition,
+        size: Size,
+    ) -> Option<(u64, DebugRegister, u64)> {
+        let index = (0..4).find_map(|i| ((dr7 & (0b11 << (i * 2))) == 0).then(|| i))?;
+
+        let dr = match index {
+            0 => DebugRegister::Dr0,
+            1 => DebugRegister::Dr1,
+            2 => DebugRegister::Dr2,
+            3 => DebugRegister::Dr3,
+            _ => unreachable!(),
+        };
+
+        // Prepare clear mask (to clear on drop) and to make sure there's no garbage left in the
+        // condition or size bits.
+        let clear_mask = !((0b1111 << (16 + index * 4)) | (0b11 << (index * 2)));
+        dr7 &= clear_mask;
+
+        // Enable corresponding local breakpoint (diagram represents 1 byte per cell).
+        // DR7 = [ .. | G3 | L3 | G2 | L2 | G1 | L1 | G0 | L0 ]
+        dr7 |= 1 << (index * 2);
+
+        // Toggle the correct bits on conditon and size (diagram represents 2 bytes per cell).
+        // DR7 = [ .. | S3 |  C3 | S2 | C2 | S1 | C1 | S0 | C0 | .. ]
+        let sc = (((size as u8) << 2) | (cond as u8)) as u64;
+        dr7 |= sc << (16 + index * 4);
+
+        Some((clear_mask, dr, dr7))
     }
 }
 
@@ -254,5 +282,45 @@ impl<'a> Drop for Breakpoint<'a> {
                 eprintln!("failed to reset debug register on watchpoint drop: {}", e);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn brk_add_one() {
+        // DR7 starts with garbage which should be respected.
+        let (clear_mask, dr, dr7) =
+            Breakpoint::update_dbg_control(0x1700, Condition::Write, Size::DoubleWord).unwrap();
+
+        assert_eq!(clear_mask, 0xffff_ffff_fff0_fffc);
+        assert_eq!(dr, DebugRegister::Dr0);
+        assert_eq!(dr7, 0x0000_0000_000d_1701);
+    }
+
+    #[test]
+    fn brk_add_two() {
+        let (clear_mask, dr, dr7) = Breakpoint::update_dbg_control(
+            0x0000_0000_000d_0001,
+            Condition::Write,
+            Size::DoubleWord,
+        )
+        .unwrap();
+
+        assert_eq!(clear_mask, 0xffff_ffff_ff0f_fff3);
+        assert_eq!(dr, DebugRegister::Dr1);
+        assert_eq!(dr7, 0x0000_0000_00dd_0005);
+    }
+
+    #[test]
+    fn brk_try_add_when_max() {
+        assert!(Breakpoint::update_dbg_control(
+            0x0000_0000_dddd_0055,
+            Condition::Write,
+            Size::DoubleWord
+        )
+        .is_none());
     }
 }
