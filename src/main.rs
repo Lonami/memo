@@ -48,17 +48,30 @@ fn main() {
     let process = Process::open(pid).unwrap();
     println!("Opened process {:?}", process);
 
-    let mask = winnt::PAGE_EXECUTE_READWRITE
-        | winnt::PAGE_EXECUTE_WRITECOPY
-        | winnt::PAGE_READWRITE
-        | winnt::PAGE_WRITECOPY;
+    let before = process.memory_regions();
+    std::thread::sleep(std::time::Duration::from_secs(10));
+    let after = process.memory_regions();
 
-    let regions = process
-        .memory_regions()
-        .into_iter()
-        .filter(|p| (p.Protect & mask) != 0)
-        .collect::<Vec<_>>();
+    before.iter().for_each(|pre| {
+        if let Some(post) = after.iter().find(|post| post.BaseAddress == pre.BaseAddress) {
+            if post.RegionSize != pre.RegionSize {
+                println!("region {:?} size changed: {:x} -> {:x}", pre.BaseAddress, pre.RegionSize, post.RegionSize);
+            }
+            if post.Protect != pre.Protect {
+                println!("region {:?} prot. changed: {:x} -> {:x}", pre.BaseAddress, pre.Protect, post.Protect);
+            }
+        } else {
+            println!("region {:?} lost", pre.BaseAddress);
+        }
+    });
 
+    after.iter().for_each(|post| {
+        if !before.iter().any(|pre| pre.BaseAddress == post.BaseAddress) {
+            println!("region {:?} came to life", post.BaseAddress);
+        }
+    });
+
+    /*
     println!("Scanning {} memory regions", regions.len());
     let scan = ui::prompt_scan().unwrap();
     let mut last_scan = process.scan_regions(&regions, scan);
@@ -82,6 +95,7 @@ fn main() {
     if !maybe_do_nop_instructions(pid, &last_scan, &process) {
         do_change_value(last_scan, process);
     }
+     */
 }
 
 #[cfg(feature = "patch-nops")]
