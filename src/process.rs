@@ -305,6 +305,47 @@ impl Process {
             "no matching instruction found",
         ))
     }
+
+    /// Allocate `size` bytes in the process' memory, as close as possible to `addr`.
+    ///
+    /// The newly-allocated memory is initialized to zero.
+    ///
+    /// If `size` crosses page boundaries, more than one page will be allocated.
+    pub fn alloc(&self, addr: usize, size: usize) -> io::Result<usize> {
+        // SAFETY valid handle, no nasty side-effects.
+        let res = unsafe {
+            winapi::um::memoryapi::VirtualAllocEx(
+                self.handle.as_ptr(),
+                addr as _,
+                size,
+                winnt::MEM_COMMIT | winnt::MEM_RESERVE,
+                winnt::PAGE_EXECUTE_READWRITE,
+            )
+        };
+        if res == ptr::null_mut() {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(res as _)
+        }
+    }
+
+    /// Free previously-allocated memory.
+    pub fn dealloc(&self, addr: usize) -> io::Result<()> {
+        // SAFETY valid handle, no nasty side-effects.
+        if unsafe {
+            winapi::um::memoryapi::VirtualFreeEx(
+                self.handle.as_ptr(),
+                addr as _,
+                0,
+                winnt::MEM_RELEASE,
+            )
+        } == FALSE
+        {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl Drop for Process {
