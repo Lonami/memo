@@ -79,15 +79,17 @@ fn main() {
         );
     }
 
-    if !maybe_do_nop_instructions(pid, &last_scan, &process) {
+    if !maybe_do_inject_code(pid, &last_scan, &process) {
         do_change_value(last_scan, process);
     }
 }
 
 #[cfg(feature = "patch-nops")]
-fn maybe_do_nop_instructions(pid: u32, last_scan: &[scan::Region], process: &Process) -> bool {
-    let action =
-        ui::prompt::<String>("Do you want to NOP the writes to those locations (y/n)?: ").unwrap();
+fn maybe_do_inject_code(pid: u32, last_scan: &[scan::Region], process: &Process) -> bool {
+    let action = ui::prompt::<String>(
+        "Do you want to inject code on the writes to those locations (y/n)?: ",
+    )
+    .unwrap();
 
     if action != "y" && action != "Y" {
         return false;
@@ -104,7 +106,7 @@ fn maybe_do_nop_instructions(pid: u32, last_scan: &[scan::Region], process: &Pro
     last_scan.into_iter().for_each(|region| {
         region.locations.iter().for_each(|addr| {
             println!("Watching writes to {:x} for 10s", addr);
-            let _watchpoints = threads
+            let watchpoints = threads
                 .iter_mut()
                 .map(|thread| {
                     thread
@@ -112,23 +114,24 @@ fn maybe_do_nop_instructions(pid: u32, last_scan: &[scan::Region], process: &Pro
                         .unwrap()
                 })
                 .collect::<Vec<_>>();
-            loop {
+
+            let addr = loop {
                 let event = debugger.wait_event(None).unwrap();
                 if event.dwDebugEventCode == winapi::um::minwinbase::EXCEPTION_DEBUG_EVENT {
                     let exc = unsafe { event.u.Exception() };
                     if exc.ExceptionRecord.ExceptionCode
                         == winapi::um::minwinbase::EXCEPTION_SINGLE_STEP
                     {
-                        process
-                            .nop_last_instruction(exc.ExceptionRecord.ExceptionAddress as usize)
-                            .unwrap();
-
                         debugger.cont(event, true).unwrap();
-                        break;
+                        break exc.ExceptionRecord.ExceptionAddress as usize;
                     }
                 }
                 debugger.cont(event, true).unwrap();
-            }
+            };
+
+            drop(watchpoints);
+
+            process.nop_last_instruction(addr).unwrap();
         })
     });
 
@@ -136,7 +139,7 @@ fn maybe_do_nop_instructions(pid: u32, last_scan: &[scan::Region], process: &Pro
 }
 
 #[cfg(not(feature = "patch-nops"))]
-fn maybe_do_nop_instructions(_pid: u32, _last_scan: &[scan::Region], _process: &Process) -> bool {
+fn maybe_do_inject_code(_pid: u32, _last_scan: &[scan::Region], _process: &Process) -> bool {
     false
 }
 
