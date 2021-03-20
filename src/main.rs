@@ -131,7 +131,17 @@ fn maybe_do_inject_code(pid: u32, last_scan: &[scan::Region], process: &Process)
 
             drop(watchpoints);
 
-            process.nop_last_instruction(addr).unwrap();
+            let action = ui::prompt::<String>(&format!(
+                "Do you want to simply inject NOPs replacing the old code at {:x} (y/n)?: ",
+                addr
+            ))
+            .unwrap();
+
+            if action == "y" && action == "Y" {
+                process.nop_last_instruction(addr).unwrap();
+            } else {
+                todo!("inject custom code");
+            }
         })
     });
 
