@@ -140,7 +140,33 @@ fn maybe_do_inject_code(pid: u32, last_scan: &[scan::Region], process: &Process)
             if action == "y" && action == "Y" {
                 process.nop_last_instruction(addr).unwrap();
             } else {
-                todo!("inject custom code");
+                let region = process
+                    .memory_regions()
+                    .into_iter()
+                    .rev()
+                    .find(|p| (p.State & winnt::MEM_FREE) != 0 && (p.BaseAddress as usize) < addr)
+                    .unwrap();
+
+                let target_addr = process.alloc(region.BaseAddress as usize + region.RegionSize - 2048, 2048).unwrap();
+
+                // The relative JMP itself are 5 bytes, the last 2 are NOP (hence the -2 in delta calculation).
+                // Relative jumps add to the instruction pointer when it *ends* executing the instruction (like JMP).
+                //   jmp target_addr
+                //   nop 2
+                let mut jmp = [0xE9, 0, 0, 0, 0, 0x66, 0x90];
+                jmp[1..5].copy_from_slice(&((target_addr as isize - (addr - 2) as isize) as i32).to_le_bytes());
+                process.write_memory(addr - jmp.len(), &jmp).unwrap();
+
+                // addr is already where the old instruction ended, no need to re-skip our previously written jump.
+                // By the end of the execution of this jump, the instruction pointer will be at (base + code len).
+                //   add dword ptr [rsi+000007E0], 2
+                //   jmp addr
+                let mut injection = [0x83, 0x86, 0xE0, 0x07, 0x00, 0x00, 0x02, 0xE9, 0, 0, 0, 0];
+                let inj_len = injection.len();
+                injection[8..12].copy_from_slice(&((addr as isize - (target_addr + inj_len) as isize) as i32).to_le_bytes());
+                process.write_memory(target_addr, &injection).unwrap();
+
+                println!("Replaced the SUB 1 at {:x} with ADD 2 at {:x} successfully!", addr, target_addr);
             }
         })
     });
