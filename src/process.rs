@@ -166,6 +166,27 @@ impl Process {
         }
     }
 
+    /// Returns the memory regions which fall within the location of one of the process' modules.
+    /// This means addresses within these regions are "stable" and are unlikely to change when
+    /// the program reloads. The returned list is sorted by module order, not region position.
+    pub fn base_memory_regions(&self) -> io::Result<Vec<MEMORY_BASIC_INFORMATION>> {
+        let modules = self.enum_modules()?;
+        let regions = self.memory_regions();
+        Ok(modules
+            .iter()
+            .flat_map(|module| {
+                regions
+                    .iter()
+                    .find(|region| {
+                        let base = region.AllocationBase as usize;
+                        let addr = *module as usize;
+                        base == addr
+                    })
+                    .copied()
+            })
+            .collect())
+    }
+
     pub fn read_memory(&self, addr: usize, n: usize) -> io::Result<Vec<u8>> {
         let mut buffer = Vec::<u8>::with_capacity(n);
         let mut read = 0;

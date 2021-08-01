@@ -69,29 +69,6 @@ fn main() {
     }
 }
 
-/*
-
-
-let mut bases = 0;
-let modules = process.enum_modules().unwrap();
-let regions = process.memory_regions();
-regions.iter().for_each(|region| {
-    if modules.iter().any(|module| {
-        let base = region.AllocationBase as usize;
-        let addr = *module as usize;
-        base <= addr && addr < base + region.RegionSize
-    }) {
-        bases += 1;
-    }
-});
-
-println!(
-    "{}/{} regions have a module address within them",
-    bases,
-    regions.len()
-);
-*/
-
 const MAX_OFFSET: usize = 0x20;
 
 // Returns a vector with the vectors of valid offsets.
