@@ -59,86 +59,14 @@ fn main() {
         .filter(|p| (p.Protect & mask) != 0)
         .collect::<Vec<_>>();
 
-    // PW = 525927
-
     println!("Scanning {} memory regions", regions.len());
-    let scan = ui::prompt_scan().unwrap();
-    let mut last_scan = process.scan_regions(&regions, scan);
-    println!(
-        "Found {} locations",
-        last_scan.iter().map(|r| r.locations.len()).sum::<usize>()
-    );
+    let last_scan = repl_find_value(&regions, &process);
 
-    while last_scan.iter().map(|r| r.locations.len()).sum::<usize>() != 1 {
-        let scan = match ui::prompt_scan() {
-            Ok(scan) => scan,
-            Err(_) => break,
-        };
-        last_scan = process.rescan_regions(&last_scan, scan);
-        println!(
-            "Now have {} locations",
-            last_scan.iter().map(|r| r.locations.len()).sum::<usize>()
-        );
+    if !maybe_do_find_ptr_path(&last_scan, &regions, &process) {
+        if !maybe_do_inject_code(pid, &last_scan, &process) {
+            do_change_value(last_scan, process);
+        }
     }
-
-    let first_addr = last_scan
-        .iter()
-        .flat_map(|r| r.locations.iter())
-        .next()
-        .unwrap();
-    let first_snap = Snapshot::new(&process, &regions);
-
-    println!("Enter new value AFTER address change");
-
-    // >>>
-    let scan = ui::prompt_scan().unwrap();
-    let mut last_scan = process.scan_regions(&regions, scan);
-    println!(
-        "Found {} locations",
-        last_scan.iter().map(|r| r.locations.len()).sum::<usize>()
-    );
-
-    while last_scan.iter().map(|r| r.locations.len()).sum::<usize>() != 1 {
-        let scan = match ui::prompt_scan() {
-            Ok(scan) => scan,
-            Err(_) => break,
-        };
-        last_scan = process.rescan_regions(&last_scan, scan);
-        println!(
-            "Now have {} locations",
-            last_scan.iter().map(|r| r.locations.len()).sum::<usize>()
-        );
-    }
-
-    let second_addr = last_scan
-        .iter()
-        .flat_map(|r| r.locations.iter())
-        .next()
-        .unwrap();
-    let second_snap = Snapshot::new(&process, &regions);
-    // <<<
-
-    println!("Now have two snapshots. Looking for pointers that work in BOTH");
-    let offsets = find_pointer_paths(first_snap, first_addr, second_snap, second_addr);
-
-    let _ = ui::prompt::<String>(&format!("This is what I found {:?}. I'll tell you the value after pressing ENTER.", offsets));
-
-    for offs in offsets {
-        let base = offs
-            .iter()
-            .take(offs.len() - 1)
-            .fold(0, |base, offset| {
-                usize::from_ne_bytes(process.read_memory(base + offset, 8).unwrap().try_into().unwrap())
-            });
-
-        dbg!(i32::from_ne_bytes(process.read_memory(base + offs[offs.len() - 1], 4).unwrap().try_into().unwrap()));
-    }
-
-    // CE FINDS: BASE+00306B00, 10, 18, 0, 18
-
-    // if !maybe_do_inject_code(pid, &last_scan, &process) {
-    //     do_change_value(last_scan, process);
-    // }
 }
 
 /*
@@ -380,6 +308,80 @@ impl Snapshot {
                 )
             })
     }
+}
+
+fn repl_find_value(regions: &[MEMORY_BASIC_INFORMATION], process: &Process) -> Vec<scan::Region> {
+    let scan = ui::prompt_scan().unwrap();
+    let mut last_scan = process.scan_regions(regions, scan);
+    println!(
+        "Found {} locations",
+        last_scan.iter().map(|r| r.locations.len()).sum::<usize>()
+    );
+
+    while last_scan.iter().map(|r| r.locations.len()).sum::<usize>() != 1 {
+        let scan = match ui::prompt_scan() {
+            Ok(scan) => scan,
+            Err(_) => break,
+        };
+        last_scan = process.rescan_regions(&last_scan, scan);
+        println!(
+            "Now have {} locations",
+            last_scan.iter().map(|r| r.locations.len()).sum::<usize>()
+        );
+    }
+
+    last_scan
+}
+
+fn maybe_do_find_ptr_path(last_scan: &[scan::Region], regions: &[MEMORY_BASIC_INFORMATION], process: &Process) -> bool {
+    let action = ui::prompt::<String>(
+        "Do you want to perform a second scan of the same value to find a stable pointer path to it?: ",
+    )
+    .unwrap();
+
+    if action != "y" && action != "Y" {
+        return false;
+    }
+
+    let first_addr = last_scan
+        .iter()
+        .flat_map(|r| r.locations.iter())
+        .next()
+        .unwrap();
+    let first_snap = Snapshot::new(&process, &regions);
+
+    println!("Make the address change (for example, log out and back in again).");
+    println!("After that, make sure to find the same value you were looking for before.");
+
+    // >>>
+    let last_scan = repl_find_value(regions, process);
+
+    let second_addr = last_scan
+        .iter()
+        .flat_map(|r| r.locations.iter())
+        .next()
+        .unwrap();
+    let second_snap = Snapshot::new(&process, &regions);
+    // <<<
+
+    println!("Process snapshots taken before and after the memory locations changed.");
+    println!("Now looking for pointer paths were the offsets match exactly in both.");
+    let offsets = find_pointer_paths(first_snap, first_addr, second_snap, second_addr);
+
+    println!("Here are the offsets I found:\n{:?}", offsets);
+
+    for offs in offsets {
+        let base = offs
+            .iter()
+            .take(offs.len() - 1)
+            .fold(0, |base, offset| {
+                usize::from_ne_bytes(process.read_memory(base + offset, 8).unwrap().try_into().unwrap())
+            });
+
+        dbg!(i32::from_ne_bytes(process.read_memory(base + offs[offs.len() - 1], 4).unwrap().try_into().unwrap()));
+    }
+
+    true
 }
 
 #[cfg(feature = "patch-nops")]
