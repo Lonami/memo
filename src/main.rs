@@ -95,7 +95,12 @@ println!(
 const MAX_OFFSET: usize = 0x20;
 
 // Returns a vector with the vectors of valid offsets.
-fn find_pointer_paths(first_snap: Snapshot, first_addr: usize, second_snap: Snapshot, second_addr: usize) -> Vec<Vec<usize>> {
+fn find_pointer_paths(
+    first_snap: Snapshot,
+    first_addr: usize,
+    second_snap: Snapshot,
+    second_addr: usize,
+) -> Vec<Vec<usize>> {
     const TOP_DEPTH: u8 = 7;
     let pf = PathFinder {
         first_snap,
@@ -103,7 +108,6 @@ fn find_pointer_paths(first_snap: Snapshot, first_addr: usize, second_snap: Snap
         addresses: std::cell::Cell::new(Vec::new()),
     };
     pf.run(first_addr, second_addr, TOP_DEPTH);
-
 
     /*
     The found `pf.addresses` form a tree, for example (values at the bottom come first):
@@ -139,7 +143,13 @@ fn find_pointer_paths(first_snap: Snapshot, first_addr: usize, second_snap: Snap
 
         // `slice::windows_mut` isn't a thing, so use a good ol' loop.
         for i in (1..offs.len()).rev() {
-            let ptr_value = usize::from_ne_bytes(pf.second_snap.read_memory(offs[i - 1], std::mem::size_of::<usize>()).unwrap().try_into().unwrap());
+            let ptr_value = usize::from_ne_bytes(
+                pf.second_snap
+                    .read_memory(offs[i - 1], std::mem::size_of::<usize>())
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+            );
             offs[i] -= ptr_value;
         }
     }
@@ -263,9 +273,6 @@ impl Snapshot {
     }
 
     pub fn read_memory(&self, addr: usize, n: usize) -> Option<&[u8]> {
-        let mut buffer = Vec::<u8>::with_capacity(n);
-        let mut read = 0;
-
         let index = match self.blocks.binary_search_by_key(&addr, |b| b.real_addr) {
             Ok(index) => index,
             Err(index) => index - 1,
@@ -333,7 +340,11 @@ fn repl_find_value(regions: &[MEMORY_BASIC_INFORMATION], process: &Process) -> V
     last_scan
 }
 
-fn maybe_do_find_ptr_path(last_scan: &[scan::Region], regions: &[MEMORY_BASIC_INFORMATION], process: &Process) -> bool {
+fn maybe_do_find_ptr_path(
+    last_scan: &[scan::Region],
+    regions: &[MEMORY_BASIC_INFORMATION],
+    process: &Process,
+) -> bool {
     let action = ui::prompt::<String>(
         "Do you want to perform a second scan of the same value to find a stable pointer path to it?: ",
     )
@@ -371,14 +382,23 @@ fn maybe_do_find_ptr_path(last_scan: &[scan::Region], regions: &[MEMORY_BASIC_IN
     println!("Here are the offsets I found:\n{:?}", offsets);
 
     for offs in offsets {
-        let base = offs
-            .iter()
-            .take(offs.len() - 1)
-            .fold(0, |base, offset| {
-                usize::from_ne_bytes(process.read_memory(base + offset, 8).unwrap().try_into().unwrap())
-            });
+        let base = offs.iter().take(offs.len() - 1).fold(0, |base, offset| {
+            usize::from_ne_bytes(
+                process
+                    .read_memory(base + offset, 8)
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+            )
+        });
 
-        dbg!(i32::from_ne_bytes(process.read_memory(base + offs[offs.len() - 1], 4).unwrap().try_into().unwrap()));
+        dbg!(i32::from_ne_bytes(
+            process
+                .read_memory(base + offs[offs.len() - 1], 4)
+                .unwrap()
+                .try_into()
+                .unwrap()
+        ));
     }
 
     true
@@ -447,14 +467,18 @@ fn maybe_do_inject_code(pid: u32, last_scan: &[scan::Region], process: &Process)
                     .find(|p| (p.State & winnt::MEM_FREE) != 0 && (p.BaseAddress as usize) < addr)
                     .unwrap();
 
-                let target_addr = process.alloc(region.BaseAddress as usize + region.RegionSize - 2048, 2048).unwrap();
+                let target_addr = process
+                    .alloc(region.BaseAddress as usize + region.RegionSize - 2048, 2048)
+                    .unwrap();
 
                 // The relative JMP itself are 5 bytes, the last 2 are NOP (hence the -2 in delta calculation).
                 // Relative jumps add to the instruction pointer when it *ends* executing the instruction (like JMP).
                 //   jmp target_addr
                 //   nop 2
                 let mut jmp = [0xE9, 0, 0, 0, 0, 0x66, 0x90];
-                jmp[1..5].copy_from_slice(&((target_addr as isize - (addr - 2) as isize) as i32).to_le_bytes());
+                jmp[1..5].copy_from_slice(
+                    &((target_addr as isize - (addr - 2) as isize) as i32).to_le_bytes(),
+                );
                 process.write_memory(addr - jmp.len(), &jmp).unwrap();
 
                 // addr is already where the old instruction ended, no need to re-skip our previously written jump.
@@ -463,10 +487,15 @@ fn maybe_do_inject_code(pid: u32, last_scan: &[scan::Region], process: &Process)
                 //   jmp addr
                 let mut injection = [0x83, 0x86, 0xE0, 0x07, 0x00, 0x00, 0x02, 0xE9, 0, 0, 0, 0];
                 let inj_len = injection.len();
-                injection[8..12].copy_from_slice(&((addr as isize - (target_addr + inj_len) as isize) as i32).to_le_bytes());
+                injection[8..12].copy_from_slice(
+                    &((addr as isize - (target_addr + inj_len) as isize) as i32).to_le_bytes(),
+                );
                 process.write_memory(target_addr, &injection).unwrap();
 
-                println!("Replaced the SUB 1 at {:x} with ADD 2 at {:x} successfully!", addr, target_addr);
+                println!(
+                    "Replaced the SUB 1 at {:x} with ADD 2 at {:x} successfully!",
+                    addr, target_addr
+                );
             }
         })
     });
