@@ -134,10 +134,39 @@ fn maybe_do_find_ptr_path(
     println!("Now looking for pointer paths were the offsets match exactly in both.");
     let offsets = snapshot::find_pointer_paths(first_snap, first_addr, second_snap, second_addr);
 
-    println!("Here are the offsets I found:\n{:?}", offsets);
+    println!("Here are the offsets I found:");
+    let base = process.base_memory_regions().unwrap()[0].BaseAddress as usize;
+    let name = process.name().unwrap();
+    offsets.iter().enumerate().for_each(|(i, offset_list)| {
+        print!("{}. ", i);
+        for _offset in offset_list.iter() {
+            print!("[");
+        }
+        let mut first = true;
+        for offset in offset_list.iter() {
+            if first {
+                print!("\"{}\"+{:X}]", name, offset - base);
+                first = false;
+            } else {
+                print!(" + {:X}]", offset);
+            }
+        }
+        println!();
+    });
 
-    for offs in offsets {
-        let base = offs.iter().take(offs.len() - 1).fold(0, |base, offset| {
+    let index = ui::prompt::<usize>("Which one should I use?: ").unwrap();
+    let offset_list = &offsets[index];
+
+    let scan = ui::prompt::<Scan<Box<dyn Scannable>>>("Enter new memory value: ");
+    let new_value = match &scan {
+        Ok(Scan::Exact(value)) => value.mem_view(),
+        _ => panic!("can only write exact values"),
+    };
+
+    let addr = offset_list
+        .iter()
+        .take(offset_list.len() - 1)
+        .fold(0, |base, offset| {
             usize::from_ne_bytes(
                 process
                     .read_memory(base + offset, 8)
@@ -145,16 +174,13 @@ fn maybe_do_find_ptr_path(
                     .try_into()
                     .unwrap(),
             )
-        });
+        })
+        + offset_list.last().unwrap();
 
-        dbg!(i32::from_ne_bytes(
-            process
-                .read_memory(base + offs[offs.len() - 1], 4)
-                .unwrap()
-                .try_into()
-                .unwrap()
-        ));
-    }
+    match process.write_memory(addr, new_value) {
+        Ok(n) => eprintln!("Written {} bytes to [{:x}]", n, addr),
+        Err(e) => eprintln!("Failed to write to [{:x}]: {}", addr, e),
+    };
 
     true
 }

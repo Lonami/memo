@@ -1,5 +1,5 @@
-use std::convert::TryInto;
 use crate::Process;
+use std::convert::TryInto;
 
 const MAX_OFFSET: usize = 0x400;
 
@@ -82,7 +82,7 @@ pub fn find_pointer_paths(
 }
 
 impl Snapshot {
-     pub fn new(process: &Process, regions: &[winapi::um::winnt::MEMORY_BASIC_INFORMATION]) -> Self {
+    pub fn new(process: &Process, regions: &[winapi::um::winnt::MEMORY_BASIC_INFORMATION]) -> Self {
         let modules = process.enum_modules().unwrap();
         let mut blocks = regions
             .iter()
