@@ -92,8 +92,16 @@ pub fn queued_find_pointer_paths(
 ) -> Vec<Vec<usize>> {
     const TOP_DEPTH: u8 = 7;
 
-    let mut qpf = QueuePathFinder::new(first_snap, second_snap);
-    qpf.run(first_addr, second_addr, TOP_DEPTH);
+    let mut qpf = QueuePathFinderBuilder {
+        first_snap,
+        first_addr,
+        second_snap,
+        second_addr,
+        depth: TOP_DEPTH,
+    }
+    .finish();
+
+    while qpf.step() {}
 
     let second_snap = qpf.second_snap;
     let good_finds = qpf.good_finds;
@@ -285,24 +293,40 @@ struct QueuePathFinder {
     new_work: BinaryHeap<FutureNode>,
 }
 
-impl QueuePathFinder {
-    pub fn new(first_snap: Snapshot, second_snap: Snapshot) -> Self {
-        Self {
-            first_snap,
-            second_snap,
+struct QueuePathFinderBuilder {
+    first_snap: Snapshot,
+    first_addr: usize,
+    second_snap: Snapshot,
+    second_addr: usize,
+    depth: u8,
+}
+
+impl QueuePathFinderBuilder {
+    pub fn finish(self) -> QueuePathFinder {
+        QueuePathFinder {
+            first_snap: self.first_snap,
+            second_snap: self.second_snap,
             good_finds: Vec::new(),
-            nodes_walked: Vec::new(),
-            new_work: BinaryHeap::new(),
+            nodes_walked: vec![CandidateNode {
+                parent: None,
+                addr: self.second_addr,
+            }],
+            new_work: {
+                let mut new_work = BinaryHeap::new();
+                new_work.push(FutureNode {
+                    node_idx: 0,
+                    first_addr: self.first_addr,
+                    second_addr: self.second_addr,
+                    depth: self.depth,
+                });
+                new_work
+            },
         }
     }
+}
 
-    pub fn run(&mut self, first_addr: usize, second_addr: usize, depth: u8) {
-        // Kick off the threads from a single node.
-        self.add_work(None, first_addr, second_addr, depth);
-        while self.tick() {}
-    }
-
-    fn tick(&mut self) -> bool {
+impl QueuePathFinder {
+    pub fn step(&mut self) -> bool {
         let future_node = if let Some(future_node) = self.new_work.pop() {
             future_node
         } else {
