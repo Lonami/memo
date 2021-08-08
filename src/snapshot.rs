@@ -358,31 +358,21 @@ impl QueuePathFinder {
                 .iter_addr()
                 .filter(|(_fra, fpv)| fpv.wrapping_add(offset) == future_node.first_addr)
             {
-                self.add_work(Some(future_node.node_idx), fra, sra, future_node.depth - 1);
+                self.new_work.push(FutureNode {
+                    node_idx: self.nodes_walked.len(),
+                    first_addr: fra,
+                    second_addr: sra,
+                    depth: future_node.depth - 1,
+                });
+                self.nodes_walked.push(CandidateNode {
+                    parent: Some(future_node.node_idx),
+                    addr: sra,
+                });
             }
         }
 
         self.first_snap = first_snap;
         self.second_snap = second_snap;
         true
-    }
-
-    fn add_work(
-        &mut self,
-        parent: Option<usize>,
-        first_addr: usize,
-        second_addr: usize,
-        depth: u8,
-    ) {
-        self.new_work.push(FutureNode {
-            node_idx: self.nodes_walked.len(),
-            first_addr,
-            second_addr,
-            depth,
-        });
-        self.nodes_walked.push(CandidateNode {
-            parent,
-            addr: second_addr,
-        });
     }
 }
