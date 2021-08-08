@@ -141,8 +141,11 @@ pub fn queued_find_pointer_paths(
             // Walk the linked list.
             let mut node = nodes_walked[node_idx].clone();
             addresses.push(node.addr);
-            while let Some(node_idx) = node.parent {
-                node = nodes_walked[node_idx].clone();
+
+            // A parent pointing to itself represents the end.
+            // This is similar to trying to `cd ..` when already at `/`.
+            while node.parent != nodes_walked[node.parent].parent {
+                node = nodes_walked[node.parent].clone();
                 addresses.push(node.addr);
             }
 
@@ -301,7 +304,7 @@ impl PathFinder {
 
 #[derive(Clone, Debug)]
 struct CandidateNode {
-    parent: Option<usize>,
+    parent: usize,
     addr: usize,
 }
 
@@ -345,7 +348,7 @@ impl QueuePathFinderBuilder {
             second_snap: self.second_snap,
             good_finds: Mutex::new(Vec::new()),
             nodes_walked: Mutex::new(vec![CandidateNode {
-                parent: None,
+                parent: 0,
                 addr: self.second_addr,
             }]),
             new_work: {
@@ -395,7 +398,7 @@ impl QueuePathFinder {
                 let mut nodes_walked = self.nodes_walked.lock().unwrap();
                 self.good_finds.lock().unwrap().push(nodes_walked.len());
                 nodes_walked.push(CandidateNode {
-                    parent: Some(future_node.node_idx),
+                    parent: future_node.node_idx,
                     addr: sra,
                 });
                 continue;
@@ -427,7 +430,7 @@ impl QueuePathFinder {
                 // `working_now -= 1` instead increases the runtime from ~500ms to ~650ms.
                 self.work_cvar.notify_one();
                 nodes_walked.push(CandidateNode {
-                    parent: Some(future_node.node_idx),
+                    parent: future_node.node_idx,
                     addr: sra,
                 });
             }
