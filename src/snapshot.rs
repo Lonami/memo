@@ -1,6 +1,7 @@
 use crate::Process;
 use std::collections::BinaryHeap;
 use std::convert::TryInto;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
@@ -330,7 +331,7 @@ struct QueuePathFinder {
     work_cvar: Condvar,
     /// How many threads are working right now.
     /// Once there is no work and nobody is working, exit, as there won't ever be more work.
-    working_now: Mutex<usize>,
+    working_now: AtomicU8,
 }
 
 struct QueuePathFinderBuilder {
@@ -362,7 +363,7 @@ impl QueuePathFinderBuilder {
                 Mutex::new(new_work)
             },
             work_cvar: Condvar::new(),
-            working_now: Mutex::new(0),
+            working_now: AtomicU8::new(0),
         }
     }
 }
@@ -374,9 +375,9 @@ impl QueuePathFinder {
             loop {
                 if let Some(future_node) = new_work.pop() {
                     // We're now working. It's MANDATORY we decrement this later.
-                    *self.working_now.lock().unwrap() += 1;
+                    self.working_now.fetch_add(1, Ordering::SeqCst);
                     break future_node;
-                } else if *self.working_now.lock().unwrap() == 0 {
+                } else if self.working_now.load(Ordering::SeqCst) == 0 {
                     // Once there is no work left AND nobody else is working, we're done.
                     return false;
                 } else {
@@ -415,7 +416,7 @@ impl QueuePathFinder {
             // it actually improves it by ~20ms.
             let first_addr = future_node.first_addr - offset;
             for (fra, fpv) in self.first_snap.iter_addr() {
-                if fpv != first_addr  {
+                if fpv != first_addr {
                     continue;
                 }
 
@@ -436,9 +437,7 @@ impl QueuePathFinder {
             }
         }
 
-        let mut working_now = self.working_now.lock().unwrap();
-        *working_now -= 1;
-        if *working_now == 0 {
+        if self.working_now.fetch_sub(1, Ordering::SeqCst) == 1 {
             // We were the last thread working, and now nobody is, so wake everyone up.
             // There's probably no more work left to do, so we're done.
             self.work_cvar.notify_all();
