@@ -1,6 +1,8 @@
 use crate::Process;
 use std::collections::BinaryHeap;
 use std::convert::TryInto;
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 const MAX_OFFSET: usize = 0x400;
 
@@ -92,20 +94,42 @@ pub fn queued_find_pointer_paths(
 ) -> Vec<Vec<usize>> {
     const TOP_DEPTH: u8 = 7;
 
-    let mut qpf = QueuePathFinderBuilder {
-        first_snap,
-        first_addr,
-        second_snap,
-        second_addr,
-        depth: TOP_DEPTH,
-    }
-    .finish();
+    let qpf = Arc::new(
+        QueuePathFinderBuilder {
+            first_snap,
+            first_addr,
+            second_snap,
+            second_addr,
+            depth: TOP_DEPTH,
+        }
+        .finish(),
+    );
 
-    while qpf.step() {}
+    let threads = [
+        thread::spawn({
+            let qpf = Arc::clone(&qpf);
+            || run_find_pointer_paths(qpf)
+        }),
+        // thread::spawn({
+        //     let qpf = Arc::clone(&qpf);
+        //     || run_find_pointer_paths(qpf)
+        // }),
+        // thread::spawn({
+        //     let qpf = Arc::clone(&qpf);
+        //     || run_find_pointer_paths(qpf)
+        // }),
+    ];
+
+    // run_find_pointer_paths(Arc::clone(&qpf));
+    for thread in threads {
+        thread.join().unwrap();
+    }
+
+    let qpf = Arc::try_unwrap(qpf).unwrap();
 
     let second_snap = qpf.second_snap;
-    let good_finds = qpf.good_finds;
-    let nodes_walked = qpf.nodes_walked;
+    let good_finds = qpf.good_finds.into_inner().unwrap();
+    let nodes_walked = qpf.nodes_walked.into_inner().unwrap();
 
     good_finds
         .into_iter()
@@ -135,6 +159,10 @@ pub fn queued_find_pointer_paths(
             offsets
         })
         .collect()
+}
+
+fn run_find_pointer_paths(qpf: Arc<QueuePathFinder>) {
+    while qpf.step() {}
 }
 
 impl Snapshot {
@@ -268,13 +296,13 @@ impl PathFinder {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct CandidateNode {
     parent: Option<usize>,
     addr: usize,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct FutureNode {
     depth: u8,
     node_idx: usize,
@@ -282,15 +310,16 @@ struct FutureNode {
     second_addr: usize,
 }
 
+#[derive(Debug)]
 struct QueuePathFinder {
     first_snap: Snapshot,
     second_snap: Snapshot,
     /// Indices of `nodes_walked` which are "good" (i.e. have reached a base address).
-    good_finds: Vec<usize>,
+    good_finds: Mutex<Vec<usize>>,
     /// Shared "tree" of nodes we've walked over, so all threads can access and reference them.
-    nodes_walked: Vec<CandidateNode>,
+    nodes_walked: Mutex<Vec<CandidateNode>>,
     /// Nodes to be used in the future, where the `node_idx` references `nodes_walked`.
-    new_work: BinaryHeap<FutureNode>,
+    new_work: Mutex<BinaryHeap<FutureNode>>,
 }
 
 struct QueuePathFinderBuilder {
@@ -306,11 +335,11 @@ impl QueuePathFinderBuilder {
         QueuePathFinder {
             first_snap: self.first_snap,
             second_snap: self.second_snap,
-            good_finds: Vec::new(),
-            nodes_walked: vec![CandidateNode {
+            good_finds: Mutex::new(Vec::new()),
+            nodes_walked: Mutex::new(vec![CandidateNode {
                 parent: None,
                 addr: self.second_addr,
-            }],
+            }]),
             new_work: {
                 let mut new_work = BinaryHeap::new();
                 new_work.push(FutureNode {
@@ -319,18 +348,22 @@ impl QueuePathFinderBuilder {
                     second_addr: self.second_addr,
                     depth: self.depth,
                 });
-                new_work
+                Mutex::new(new_work)
             },
         }
     }
 }
 
 impl QueuePathFinder {
-    pub fn step(&mut self) -> bool {
-        let future_node = if let Some(future_node) = self.new_work.pop() {
-            future_node
-        } else {
-            return false;
+    pub fn step(&self) -> bool {
+        let future_node = {
+            let mut new_work = self.new_work.lock().unwrap();
+            if let Some(future_node) = new_work.pop() {
+                future_node
+            } else {
+                println!("i'm done");
+                return false;
+            }
         };
 
         for (sra, spv) in self.second_snap.iter_addr().filter(|(_sra, spv)| {
@@ -341,8 +374,9 @@ impl QueuePathFinder {
             }
         }) {
             if self.second_snap.is_base_addr(sra) {
-                self.good_finds.push(self.nodes_walked.len());
-                self.nodes_walked.push(CandidateNode {
+                let mut nodes_walked = self.nodes_walked.lock().unwrap();
+                self.good_finds.lock().unwrap().push(nodes_walked.len());
+                nodes_walked.push(CandidateNode {
                     parent: Some(future_node.node_idx),
                     addr: sra,
                 });
@@ -357,13 +391,14 @@ impl QueuePathFinder {
                 .iter_addr()
                 .filter(|(_fra, fpv)| fpv.wrapping_add(offset) == future_node.first_addr)
             {
-                self.new_work.push(FutureNode {
-                    node_idx: self.nodes_walked.len(),
+                let mut nodes_walked = self.nodes_walked.lock().unwrap();
+                self.new_work.lock().unwrap().push(FutureNode {
+                    node_idx: nodes_walked.len(),
                     first_addr: fra,
                     second_addr: sra,
                     depth: future_node.depth - 1,
                 });
-                self.nodes_walked.push(CandidateNode {
+                nodes_walked.push(CandidateNode {
                     parent: Some(future_node.node_idx),
                     addr: sra,
                 });
