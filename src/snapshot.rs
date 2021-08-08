@@ -1,15 +1,14 @@
 use crate::Process;
 use std::collections::BinaryHeap;
 use std::convert::TryInto;
-use std::sync::{Arc, Mutex, Condvar};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
 const MAX_OFFSET: usize = 0x400;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Block {
     real_addr: usize,
     mem_offset: usize,
@@ -17,8 +16,7 @@ struct Block {
     base: bool,
 }
 
-#[derive(Clone, Debug, Default)]
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     memory: Vec<u8>,
     blocks: Vec<Block>,
@@ -411,11 +409,11 @@ impl QueuePathFinder {
             // `first_addr = first_addr - offset` and then `fpv == first_addr` increases the
             // runtime from ~500ms to ~550ms.
             let offset = future_node.second_addr - spv;
-            for (fra, _fpv) in self
-                .first_snap
-                .iter_addr()
-                .filter(|(_fra, fpv)| fpv.wrapping_add(offset) == future_node.first_addr)
-            {
+            for (fra, fpv) in self.first_snap.iter_addr() {
+                if fpv.wrapping_add(offset) != future_node.first_addr {
+                    continue;
+                }
+
                 let mut nodes_walked = self.nodes_walked.lock().unwrap();
                 self.new_work.lock().unwrap().push(FutureNode {
                     node_idx: nodes_walked.len(),
