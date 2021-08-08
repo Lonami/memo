@@ -333,16 +333,14 @@ impl QueuePathFinder {
             return false;
         };
 
-        let first_snap = std::mem::take(&mut self.first_snap);
-        let second_snap = std::mem::take(&mut self.second_snap);
-        for (sra, spv) in second_snap.iter_addr().filter(|(_sra, spv)| {
+        for (sra, spv) in self.second_snap.iter_addr().filter(|(_sra, spv)| {
             if let Some(offset) = future_node.second_addr.checked_sub(*spv) {
                 offset <= MAX_OFFSET
             } else {
                 false
             }
         }) {
-            if second_snap.is_base_addr(sra) {
+            if self.second_snap.is_base_addr(sra) {
                 self.good_finds.push(self.nodes_walked.len());
                 self.nodes_walked.push(CandidateNode {
                     parent: Some(future_node.node_idx),
@@ -354,7 +352,8 @@ impl QueuePathFinder {
                 continue;
             }
             let offset = future_node.second_addr - spv;
-            for (fra, _fpv) in first_snap
+            for (fra, _fpv) in self
+                .first_snap
                 .iter_addr()
                 .filter(|(_fra, fpv)| fpv.wrapping_add(offset) == future_node.first_addr)
             {
@@ -371,8 +370,6 @@ impl QueuePathFinder {
             }
         }
 
-        self.first_snap = first_snap;
-        self.second_snap = second_snap;
         true
     }
 }
