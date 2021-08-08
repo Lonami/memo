@@ -1,4 +1,5 @@
 use crate::Process;
+use std::collections::BinaryHeap;
 use std::convert::TryInto;
 
 const MAX_OFFSET: usize = 0x400;
@@ -265,12 +266,12 @@ struct CandidateNode {
     addr: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct FutureNode {
+    depth: u8,
     node_idx: usize,
     first_addr: usize,
     second_addr: usize,
-    depth: u8,
 }
 
 struct QueuePathFinder {
@@ -281,7 +282,7 @@ struct QueuePathFinder {
     /// Shared "tree" of nodes we've walked over, so all threads can access and reference them.
     nodes_walked: Vec<CandidateNode>,
     /// Nodes to be used in the future, where the `node_idx` references `nodes_walked`.
-    new_work: Vec<FutureNode>,
+    new_work: BinaryHeap<FutureNode>,
 }
 
 impl QueuePathFinder {
@@ -291,7 +292,7 @@ impl QueuePathFinder {
             second_snap,
             good_finds: Vec::new(),
             nodes_walked: Vec::new(),
-            new_work: Vec::new(),
+            new_work: BinaryHeap::new(),
         }
     }
 
