@@ -1,7 +1,7 @@
 use crate::Process;
 use std::collections::BinaryHeap;
 use std::convert::TryInto;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Condvar};
 use std::thread;
 
 const MAX_OFFSET: usize = 0x400;
@@ -325,6 +325,11 @@ struct QueuePathFinder {
     nodes_walked: Mutex<Vec<CandidateNode>>,
     /// Nodes to be used in the future, where the `node_idx` references `nodes_walked`.
     new_work: Mutex<BinaryHeap<FutureNode>>,
+    /// Used to lock on `new_work` when empty.
+    work_cvar: Condvar,
+    /// How many threads are working right now.
+    /// Once there is no work and nobody is working, exit, as there won't ever be more work.
+    working_now: Mutex<usize>,
 }
 
 struct QueuePathFinderBuilder {
@@ -355,6 +360,8 @@ impl QueuePathFinderBuilder {
                 });
                 Mutex::new(new_work)
             },
+            work_cvar: Condvar::new(),
+            working_now: Mutex::new(0),
         }
     }
 }
@@ -363,11 +370,18 @@ impl QueuePathFinder {
     pub fn step(&self) -> bool {
         let future_node = {
             let mut new_work = self.new_work.lock().unwrap();
-            if let Some(future_node) = new_work.pop() {
-                future_node
-            } else {
-                println!("i'm done");
-                return false;
+            loop {
+                if let Some(future_node) = new_work.pop() {
+                    // We're now working. It's MANDATORY we decrement this later.
+                    *self.working_now.lock().unwrap() += 1;
+                    break future_node;
+                } else if *self.working_now.lock().unwrap() == 0 {
+                    // Once there is no work left AND nobody else is working, we're done.
+                    return false;
+                } else {
+                    // Wait on `new_work` to be updated.
+                    new_work = self.work_cvar.wait(new_work).unwrap();
+                }
             }
         };
 
@@ -403,11 +417,20 @@ impl QueuePathFinder {
                     second_addr: sra,
                     depth: future_node.depth - 1,
                 });
+                self.work_cvar.notify_one();
                 nodes_walked.push(CandidateNode {
                     parent: Some(future_node.node_idx),
                     addr: sra,
                 });
             }
+        }
+
+        let mut working_now = self.working_now.lock().unwrap();
+        *working_now -= 1;
+        if *working_now == 0 {
+            // We were the last thread working, and now nobody is, so wake everyone up.
+            // There's probably no more work left to do, so we're done.
+            self.work_cvar.notify_all();
         }
 
         true

@@ -38,7 +38,10 @@ fn main() {
             second_snap,
             second_addr,
         } = bincode::deserialize(&buf).unwrap();
+
+        let a = std::time::Instant::now();
         let offsets = snapshot::queued_find_pointer_paths(first_snap, first_addr, second_snap, second_addr);
+        dbg!(a.elapsed());
 
         println!("Here are the offsets I found:");
         let base = 0usize;
