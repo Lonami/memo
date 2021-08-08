@@ -385,6 +385,7 @@ impl QueuePathFinder {
             }
         };
 
+        // Moving the `filter` inside the loop and changing it with `continue` worsens the performance.
         for (sra, spv) in self.second_snap.iter_addr().filter(|(_sra, spv)| {
             if let Some(offset) = future_node.second_addr.checked_sub(*spv) {
                 offset <= MAX_OFFSET
@@ -401,9 +402,14 @@ impl QueuePathFinder {
                 });
                 continue;
             }
+            // This check doesn't run a lot. Hoisting it and duplicating the code that checks for
+            // base addreses increases the runtime from ~500ms to ~600ms.
             if future_node.depth == 0 {
                 continue;
             }
+            // Changing the `fpv.wrapping_add(offset) == first_addr` check with a pre-computed
+            // `first_addr = first_addr - offset` and then `fpv == first_addr` increases the
+            // runtime from ~500ms to ~550ms.
             let offset = future_node.second_addr - spv;
             for (fra, _fpv) in self
                 .first_snap
@@ -417,6 +423,8 @@ impl QueuePathFinder {
                     second_addr: sra,
                     depth: future_node.depth - 1,
                 });
+                // Removing this line and placing an unconditional `notify_all` after
+                // `working_now -= 1` instead increases the runtime from ~500ms to ~650ms.
                 self.work_cvar.notify_one();
                 nodes_walked.push(CandidateNode {
                     parent: Some(future_node.node_idx),
