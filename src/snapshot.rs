@@ -405,12 +405,14 @@ impl QueuePathFinder {
             if future_node.depth == 0 {
                 continue;
             }
-            // Changing the `fpv.wrapping_add(offset) == first_addr` check with a pre-computed
-            // `first_addr = first_addr - offset` and then `fpv == first_addr` increases the
-            // runtime from ~500ms to ~550ms.
+
             let offset = future_node.second_addr - spv;
+            // Optimization: (fpv + offset = fra) -> (fpv = fra - offset).
+            // This used to worsen performance by ~50ms, but without `filter`,
+            // it actually improves it by ~20ms.
+            let first_addr = future_node.first_addr - offset;
             for (fra, fpv) in self.first_snap.iter_addr() {
-                if fpv.wrapping_add(offset) != future_node.first_addr {
+                if fpv != first_addr  {
                     continue;
                 }
 
