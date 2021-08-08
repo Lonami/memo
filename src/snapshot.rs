@@ -10,6 +10,7 @@ struct Block {
     base: bool,
 }
 
+#[derive(Default)]
 pub struct Snapshot {
     memory: Vec<u8>,
     blocks: Vec<Block>,
@@ -79,6 +80,52 @@ pub fn find_pointer_paths(
     */
 
     offsets
+}
+
+// Returns a vector with the vectors of valid offsets.
+pub fn queued_find_pointer_paths(
+    first_snap: Snapshot,
+    first_addr: usize,
+    second_snap: Snapshot,
+    second_addr: usize,
+) -> Vec<Vec<usize>> {
+    const TOP_DEPTH: u8 = 7;
+
+    let mut qpf = QueuePathFinder::new(first_snap, second_snap);
+    qpf.run(first_addr, second_addr, TOP_DEPTH);
+
+    let second_snap = qpf.second_snap;
+    let good_finds = qpf.good_finds;
+    let nodes_walked = qpf.nodes_walked;
+
+    good_finds
+        .into_iter()
+        .map(|node_idx| {
+            let mut addresses = Vec::with_capacity((TOP_DEPTH + 1) as usize);
+            // Walk the linked list.
+            let mut node = nodes_walked[node_idx].clone();
+            addresses.push(node.addr);
+            while let Some(node_idx) = node.parent {
+                node = nodes_walked[node_idx].clone();
+                addresses.push(node.addr);
+            }
+
+            // Now update the list of addresses to turn them into offsets.
+            let mut offsets = addresses;
+            for i in (1..offsets.len()).rev() {
+                let ptr_value = usize::from_ne_bytes(
+                    second_snap
+                        .read_memory(offsets[i - 1], std::mem::size_of::<usize>())
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                );
+                offsets[i] -= ptr_value;
+            }
+
+            offsets
+        })
+        .collect()
 }
 
 impl Snapshot {
@@ -209,5 +256,108 @@ impl PathFinder {
         }
 
         any
+    }
+}
+
+#[derive(Clone)]
+struct CandidateNode {
+    parent: Option<usize>,
+    addr: usize,
+}
+
+#[derive(Clone)]
+struct FutureNode {
+    node_idx: usize,
+    first_addr: usize,
+    second_addr: usize,
+    depth: u8,
+}
+
+struct QueuePathFinder {
+    first_snap: Snapshot,
+    second_snap: Snapshot,
+    /// Indices of `nodes_walked` which are "good" (i.e. have reached a base address).
+    good_finds: Vec<usize>,
+    /// Shared "tree" of nodes we've walked over, so all threads can access and reference them.
+    nodes_walked: Vec<CandidateNode>,
+    /// Nodes to be used in the future, where the `node_idx` references `nodes_walked`.
+    new_work: Vec<FutureNode>,
+}
+
+impl QueuePathFinder {
+    pub fn new(first_snap: Snapshot, second_snap: Snapshot) -> Self {
+        Self {
+            first_snap,
+            second_snap,
+            good_finds: Vec::new(),
+            nodes_walked: Vec::new(),
+            new_work: Vec::new(),
+        }
+    }
+
+    pub fn run(&mut self, first_addr: usize, second_addr: usize, depth: u8) {
+        // Kick off the threads from a single node.
+        self.add_work(None, first_addr, second_addr, depth);
+        while self.tick() {}
+    }
+
+    fn tick(&mut self) -> bool {
+        let future_node = if let Some(future_node) = self.new_work.pop() {
+            future_node
+        } else {
+            return false;
+        };
+
+        let first_snap = std::mem::take(&mut self.first_snap);
+        let second_snap = std::mem::take(&mut self.second_snap);
+        for (sra, spv) in second_snap.iter_addr().filter(|(_sra, spv)| {
+            if let Some(offset) = future_node.second_addr.checked_sub(*spv) {
+                offset <= MAX_OFFSET
+            } else {
+                false
+            }
+        }) {
+            if second_snap.is_base_addr(sra) {
+                self.good_finds.push(self.nodes_walked.len());
+                self.nodes_walked.push(CandidateNode {
+                    parent: Some(future_node.node_idx),
+                    addr: sra,
+                });
+                continue;
+            }
+            if future_node.depth == 0 {
+                continue;
+            }
+            let offset = future_node.second_addr - spv;
+            for (fra, _fpv) in first_snap
+                .iter_addr()
+                .filter(|(_fra, fpv)| fpv.wrapping_add(offset) == future_node.first_addr)
+            {
+                self.add_work(Some(future_node.node_idx), fra, sra, future_node.depth - 1);
+            }
+        }
+
+        self.first_snap = first_snap;
+        self.second_snap = second_snap;
+        true
+    }
+
+    fn add_work(
+        &mut self,
+        parent: Option<usize>,
+        first_addr: usize,
+        second_addr: usize,
+        depth: u8,
+    ) {
+        self.new_work.push(FutureNode {
+            node_idx: self.nodes_walked.len(),
+            first_addr,
+            second_addr,
+            depth,
+        });
+        self.nodes_walked.push(CandidateNode {
+            parent,
+            addr: second_addr,
+        });
     }
 }

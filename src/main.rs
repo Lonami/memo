@@ -132,7 +132,11 @@ fn maybe_do_find_ptr_path(
 
     println!("Process snapshots taken before and after the memory locations changed.");
     println!("Now looking for pointer paths were the offsets match exactly in both.");
-    let offsets = snapshot::find_pointer_paths(first_snap, first_addr, second_snap, second_addr);
+    let offsets = if true {
+        snapshot::queued_find_pointer_paths(first_snap, first_addr, second_snap, second_addr)
+    } else {
+        snapshot::find_pointer_paths(first_snap, first_addr, second_snap, second_addr)
+    };
 
     println!("Here are the offsets I found:");
     let base = process.base_memory_regions().unwrap()[0].BaseAddress as usize;
