@@ -27,6 +27,42 @@ impl fmt::Display for ProcessItem {
 }
 
 fn main() {
+    if let Ok(mut file) = std::fs::File::open("ptrpath.bak") {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf).unwrap();
+
+        let PtrPathBackup {
+            first_snap,
+            first_addr,
+            second_snap,
+            second_addr,
+        } = bincode::deserialize(&buf).unwrap();
+        let offsets = snapshot::queued_find_pointer_paths(first_snap, first_addr, second_snap, second_addr);
+
+        println!("Here are the offsets I found:");
+        let base = 0usize;
+        let name = "PROOCESS.EXE";
+        offsets.iter().enumerate().for_each(|(i, offset_list)| {
+            print!("{}. ", i);
+            for _offset in offset_list.iter() {
+                print!("[");
+            }
+            let mut first = true;
+            for offset in offset_list.iter() {
+                if first {
+                    print!("\"{}\"+{:X}]", name, offset - base);
+                    first = false;
+                } else {
+                    print!(" + {:X}]", offset);
+                }
+            }
+            println!();
+        });
+
+        return;
+    }
+
     let pid = PROGRAM_PID
         .map(|pid| pid.parse::<u32>().unwrap())
         .unwrap_or_else(|| {
@@ -97,6 +133,16 @@ fn repl_find_value(
     last_scan
 }
 
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize)]
+struct PtrPathBackup {
+    first_snap: snapshot::Snapshot,
+    first_addr: usize,
+    second_snap: snapshot::Snapshot,
+    second_addr: usize,
+}
+
 fn maybe_do_find_ptr_path(
     last_scan: &[scan::Region],
     regions: &[winnt::MEMORY_BASIC_INFORMATION],
@@ -133,9 +179,9 @@ fn maybe_do_find_ptr_path(
     println!("Process snapshots taken before and after the memory locations changed.");
     println!("Now looking for pointer paths were the offsets match exactly in both.");
     let offsets = if true {
-        snapshot::queued_find_pointer_paths(first_snap, first_addr, second_snap, second_addr)
+        snapshot::queued_find_pointer_paths(first_snap.clone(), first_addr, second_snap.clone(), second_addr)
     } else {
-        snapshot::find_pointer_paths(first_snap, first_addr, second_snap, second_addr)
+        snapshot::find_pointer_paths(first_snap.clone(), first_addr, second_snap.clone(), second_addr)
     };
 
     println!("Here are the offsets I found:");
@@ -157,6 +203,17 @@ fn maybe_do_find_ptr_path(
         }
         println!();
     });
+
+    use std::io::Write;
+    std::fs::File::create("ptrpath.bak").unwrap().write_all(&bincode::serialize(&PtrPathBackup {
+        first_snap,
+        first_addr,
+        second_snap,
+        second_addr,
+    }).unwrap()).unwrap();
+    if true {
+        return true;
+    }
 
     let index = ui::prompt::<usize>("Which one should I use?: ").unwrap();
     let offset_list = &offsets[index];
