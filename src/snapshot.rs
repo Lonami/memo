@@ -115,17 +115,17 @@ pub fn queued_find_pointer_paths(
             let qpf = Arc::clone(&qpf);
             || run_find_pointer_paths(qpf)
         }),
-        // thread::spawn({
-        //     let qpf = Arc::clone(&qpf);
-        //     || run_find_pointer_paths(qpf)
-        // }),
-        // thread::spawn({
-        //     let qpf = Arc::clone(&qpf);
-        //     || run_find_pointer_paths(qpf)
-        // }),
+        thread::spawn({
+            let qpf = Arc::clone(&qpf);
+            || run_find_pointer_paths(qpf)
+        }),
+        thread::spawn({
+            let qpf = Arc::clone(&qpf);
+            || run_find_pointer_paths(qpf)
+        }),
     ];
 
-    // run_find_pointer_paths(Arc::clone(&qpf));
+    run_find_pointer_paths(Arc::clone(&qpf));
     for thread in threads {
         thread.join().unwrap();
     }
