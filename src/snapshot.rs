@@ -111,6 +111,8 @@ pub fn find_pointer_paths(
         .collect()
 }
 
+// For some reason, the free-standing function seems to be faster than putting
+// it inside the `impl`, or else the runtime is increased from ~360ms to ~410ms.
 fn run_find_pointer_paths(qpf: Arc<QueuePathFinder>) {
     while qpf.step() {}
 }
@@ -182,6 +184,8 @@ impl Snapshot {
 
     // Iterate over (memory address, pointer value at said address)
     pub fn iter_addr(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        // A naive custom iterator (storing snapshot, block index and memory
+        // offset) increases the runtime from ~360ms to ~890ms.
         let mut blocks = self.blocks.iter().peekable();
         self.memory
             .chunks_exact(8)
@@ -267,6 +271,8 @@ impl QueuePathFinderBuilder {
 }
 
 impl QueuePathFinder {
+    // Changing `step` into a `run` with a `loop` that simply returns
+    // when done increases the runtime from ~360ms to ~410ms.
     pub fn step(&self) -> bool {
         let future_node = {
             let mut new_work = self.new_work.lock().unwrap();
