@@ -7,10 +7,8 @@ use std::thread;
 
 const MAX_OFFSET: usize = 0x400;
 
-use serde::{Deserialize, Serialize};
-
 define_serdes! {
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Clone, Debug, PartialEq)]
     pub struct Block {
         real_addr: usize,
         mem_offset: usize,
@@ -20,7 +18,7 @@ define_serdes! {
 }
 
 define_serdes! {
-    #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+    #[derive(Clone, Debug, Default, PartialEq)]
     pub struct Snapshot {
         pub memory: Vec<u8>,
         pub blocks: Vec<Block>,

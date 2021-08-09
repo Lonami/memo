@@ -8,10 +8,10 @@ pub mod ui;
 
 use process::Process;
 use scan::{Scan, Scannable};
+use serdes::SerDes;
 use std::convert::TryInto;
 use std::fmt;
 use winapi::um::winnt;
-use serdes::SerDes;
 
 /// Environment variable with the process identifier of the process to work with.
 /// If the variable if not set (`set PID=...`), it's asked at runtime.
@@ -29,24 +29,13 @@ impl fmt::Display for ProcessItem {
 }
 
 fn main() {
-    if let Ok(mut file) = std::fs::File::open("ptrpath.bak") {
-        use std::io::Read;
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf).unwrap();
-
-        let ptr_path = bincode::deserialize::<PtrPathBackup>(&buf).unwrap();
-        ptr_path.save(&mut std::io::BufWriter::new(std::fs::File::create("ptrpath.bin").unwrap())).unwrap();
-        let loaded = PtrPathBackup::load(&mut std::io::BufReader::new(std::fs::File::open("ptrpath.bin").unwrap())).unwrap();
-        assert_eq!(ptr_path, loaded);
-
+    if let Ok(file) = std::fs::File::open("ptrpath.bak") {
         let PtrPathBackup {
             first_snap,
             first_addr,
             second_snap,
             second_addr,
-        } = ptr_path;
-
-
+        } = PtrPathBackup::load(&mut std::io::BufReader::new(file)).unwrap();
 
         let a = std::time::Instant::now();
         let offsets =
@@ -146,10 +135,8 @@ fn repl_find_value(
     last_scan
 }
 
-use serde::{Deserialize, Serialize};
-
 define_serdes! {
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, PartialEq)]
     struct PtrPathBackup {
         first_snap: snapshot::Snapshot,
         first_addr: usize,
@@ -220,19 +207,16 @@ fn maybe_do_find_ptr_path(
         println!();
     });
 
-    use std::io::Write;
-    std::fs::File::create("ptrpath.bak")
-        .unwrap()
-        .write_all(
-            &bincode::serialize(&PtrPathBackup {
-                first_snap,
-                first_addr,
-                second_snap,
-                second_addr,
-            })
-            .unwrap(),
-        )
-        .unwrap();
+    PtrPathBackup {
+        first_snap,
+        first_addr,
+        second_snap,
+        second_addr,
+    }
+    .save(&mut std::io::BufWriter::new(
+        std::fs::File::create("ptrpath.bak").unwrap(),
+    ))
+    .unwrap();
     if true {
         return true;
     }
