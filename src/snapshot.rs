@@ -214,6 +214,8 @@ impl<'a> Iterator for AddrIter<'a> {
             self.blocks = &self.blocks[1..];
         }
 
+        // Updating chunk and memory before the `if` check above increases
+        // runtime from ~300ms to ~350ms.
         let chunk = &self.memory[..8];
         self.memory = &self.memory[8..];
         self.offset += 8;
@@ -233,7 +235,9 @@ struct CandidateNode {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct FutureNode {
+    // Changing the depth for an `usize` increases runtime from ~300ms to ~420ms.
     depth: u8,
+    // Changing the node index for an `u32` increases runtime from ~300ms to ~360ms.
     node_idx: usize,
     first_addr: usize,
     second_addr: usize,
@@ -254,6 +258,7 @@ struct QueuePathFinder {
     /// How many threads are working right now.
     /// Once there is no work and nobody is working, exit, as there won't ever be more work.
     working_now: AtomicU8,
+    // Adding another `usize` here would increase the runtime from ~300ms to ~420ms.
 }
 
 struct QueuePathFinderBuilder {
@@ -293,6 +298,8 @@ impl QueuePathFinderBuilder {
 impl QueuePathFinder {
     // Changing `step` into a `run` with a `loop` that simply returns
     // when done increases the runtime from ~360ms to ~410ms.
+    //
+    // On the tests, this method is "only" called 34 times!
     pub fn step(&self) -> bool {
         let future_node = {
             let mut new_work = self.new_work.lock().unwrap();
@@ -311,8 +318,11 @@ impl QueuePathFinder {
             }
         };
 
-        // Moving the `filter` inside the loop and changing it with `continue` worsens the performance.
+        // Moving the `filter` inside the loop and changing it with `continue`
+        // worsens the performance. Also, using internal iteration `for_each`
+        // runtime is also increased (either in the outer or inner loop).
         for (sra, spv) in self.second_snap.iter_addr().filter(|(_sra, spv)| {
+            // Changing this for a `wrapping_sub` increases runtime from ~300ms to ~480ms.
             if let Some(offset) = future_node.second_addr.checked_sub(*spv) {
                 offset <= MAX_OFFSET
             } else {
