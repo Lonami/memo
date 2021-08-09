@@ -184,24 +184,47 @@ impl Snapshot {
 
     // Iterate over (memory address, pointer value at said address)
     pub fn iter_addr(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
-        // A naive custom iterator (storing snapshot, block index and memory
-        // offset) increases the runtime from ~360ms to ~890ms.
-        let mut blocks = self.blocks.iter().peekable();
-        self.memory
-            .chunks_exact(8)
-            .enumerate()
-            .map(move |(i, chunk)| {
-                let mut block = *blocks.peek().unwrap();
-                if i * 8 >= block.mem_offset + block.len {
-                    // Roll over to the next block.
-                    block = blocks.next().unwrap();
-                }
+        AddrIter {
+            blocks: self.blocks.as_slice(),
+            memory: self.memory.as_slice(),
+            offset: 0,
+        }
+    }
+}
 
-                (
-                    block.real_addr + (i * 8 - block.mem_offset),
-                    usize::from_ne_bytes(chunk.try_into().unwrap()),
-                )
-            })
+// A naive custom iterator (storing snapshot, block index and memory offset)
+// increases the runtime from ~360ms to ~890ms. However, a somewhat smarter
+// one (such as this one) decreases it from ~360ms to ~340ms.
+pub struct AddrIter<'a> {
+    blocks: &'a [Block],
+    memory: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> Iterator for AddrIter<'a> {
+    type Item = (usize, usize);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.memory.is_empty() {
+            return None;
+        }
+
+        if self.offset >= self.blocks[0].mem_offset + self.blocks[0].len {
+            // Roll over to the next block.
+            self.blocks = &self.blocks[1..];
+        }
+
+        // Not doing this increases runtime from ~340ms to ~430ms, even if
+        // it goes unused and the indexed access is used!
+        let block = &self.blocks[0];
+        let chunk = &self.memory[..8];
+        self.memory = &self.memory[8..];
+        self.offset += 8;
+
+        Some((
+            block.real_addr + (self.offset - 8 - block.mem_offset),
+            usize::from_ne_bytes(chunk.try_into().unwrap()),
+        ))
     }
 }
 
