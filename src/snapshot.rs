@@ -214,15 +214,12 @@ impl<'a> Iterator for AddrIter<'a> {
             self.blocks = &self.blocks[1..];
         }
 
-        // Not doing this increases runtime from ~340ms to ~430ms, even if
-        // it goes unused and the indexed access is used!
-        let block = &self.blocks[0];
         let chunk = &self.memory[..8];
         self.memory = &self.memory[8..];
         self.offset += 8;
 
         Some((
-            block.real_addr + (self.offset - 8 - block.mem_offset),
+            self.blocks[0].real_addr + (self.offset - 8 - self.blocks[0].mem_offset),
             usize::from_ne_bytes(chunk.try_into().unwrap()),
         ))
     }
