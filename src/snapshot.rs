@@ -23,74 +23,8 @@ pub struct Snapshot {
     blocks: Vec<Block>,
 }
 
-struct PathFinder {
-    first_snap: Snapshot,
-    second_snap: Snapshot,
-    addresses: std::cell::Cell<Vec<(bool, u8, usize)>>,
-}
-
 // Returns a vector with the vectors of valid offsets.
 pub fn find_pointer_paths(
-    first_snap: Snapshot,
-    first_addr: usize,
-    second_snap: Snapshot,
-    second_addr: usize,
-) -> Vec<Vec<usize>> {
-    const TOP_DEPTH: u8 = 7;
-    let pf = PathFinder {
-        first_snap,
-        second_snap,
-        addresses: std::cell::Cell::new(Vec::new()),
-    };
-    pf.run(first_addr, second_addr, TOP_DEPTH);
-
-    let mut offsets = Vec::new();
-
-    for (base, depth, addr) in pf.addresses.into_inner() {
-        if base {
-            // Abuse capacity to determine which depths have been filled in.
-            offsets.push(Vec::with_capacity((TOP_DEPTH - depth + 1) as usize));
-        }
-
-        for offs in offsets.iter_mut() {
-            let desired_depth = TOP_DEPTH - (offs.capacity() - offs.len()) as u8 + 1;
-            if depth == desired_depth {
-                offs.push(addr);
-            }
-        }
-    }
-
-    for offs in offsets.iter_mut() {
-        // The top-most address wasn't pushed. Push it now.
-        offs.push(second_addr);
-
-        // `slice::windows_mut` isn't a thing, so use a good ol' loop.
-        for i in (1..offs.len()).rev() {
-            let ptr_value = usize::from_ne_bytes(
-                pf.second_snap
-                    .read_memory(offs[i - 1], std::mem::size_of::<usize>())
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-            );
-            offs[i] -= ptr_value;
-        }
-    }
-
-    /*
-    The reverse operation (in pseudo-code) would be:
-        base = base addr
-        for offset in offsets[..-1] {
-            base = [base + offset]
-        }
-        value = [base + offsets[-1]]
-    */
-
-    offsets
-}
-
-// Returns a vector with the vectors of valid offsets.
-pub fn queued_find_pointer_paths(
     first_snap: Snapshot,
     first_addr: usize,
     second_snap: Snapshot,
@@ -162,6 +96,15 @@ pub fn queued_find_pointer_paths(
                 );
                 offsets[i] -= ptr_value;
             }
+
+            /*
+            The reverse operation (in pseudo-code) would be:
+                base = base addr
+                for offset in offsets[..-1] {
+                    base = [base + offset]
+                }
+                value = [base + offsets[-1]]
+            */
 
             offsets
         })
@@ -255,51 +198,6 @@ impl Snapshot {
                     usize::from_ne_bytes(chunk.try_into().unwrap()),
                 )
             })
-    }
-}
-
-impl PathFinder {
-    fn run(&self, first_addr: usize, second_addr: usize, depth: u8) -> bool {
-        // In the second snapshot, look for all pointer values where `ptr_value + offset = second_addr`
-        // for all `offset in 0..=MAX_OFFSET`.
-        //
-        // For every `ptr_value` with a given `offset`, look EXACTLY for `first_addr - offset` in the
-        // first snapshot. Once found, we have a candidate offset valid in both snapshots, and then we
-        // can recurse to find subsequent offsets on the real addresses of these pointer values.
-        //
-        // F: first, S: second; RA: Real Address; PV: Pointer Value
-        let depth = depth - 1;
-
-        let mut any = false;
-        for (sra, spv) in self.second_snap.iter_addr().filter(|(_sra, spv)| {
-            if let Some(offset) = second_addr.checked_sub(*spv) {
-                offset <= MAX_OFFSET
-            } else {
-                false
-            }
-        }) {
-            if self.second_snap.is_base_addr(sra) {
-                unsafe { &mut *self.addresses.as_ptr() }.push((true, depth + 1, sra));
-                any = true;
-                continue;
-            }
-            if depth == 0 {
-                continue;
-            }
-            let offset = second_addr - spv;
-            for (fra, _fpv) in self
-                .first_snap
-                .iter_addr()
-                .filter(|(_fra, fpv)| fpv.wrapping_add(offset) == first_addr)
-            {
-                if self.run(fra, sra, depth) {
-                    unsafe { &mut *self.addresses.as_ptr() }.push((false, depth + 1, sra));
-                    any = true;
-                }
-            }
-        }
-
-        any
     }
 }
 
