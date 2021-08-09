@@ -9,18 +9,22 @@ const MAX_OFFSET: usize = 0x400;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct Block {
-    real_addr: usize,
-    mem_offset: usize,
-    len: usize,
-    base: bool,
+define_serdes! {
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    pub struct Block {
+        real_addr: usize,
+        mem_offset: usize,
+        len: usize,
+        base: bool,
+    }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct Snapshot {
-    memory: Vec<u8>,
-    blocks: Vec<Block>,
+define_serdes! {
+    #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+    pub struct Snapshot {
+        pub memory: Vec<u8>,
+        pub blocks: Vec<Block>,
+    }
 }
 
 // Returns a vector with the vectors of valid offsets.

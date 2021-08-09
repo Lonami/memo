@@ -1,6 +1,7 @@
 pub mod debug;
 pub mod process;
 pub mod scan;
+pub mod serdes;
 pub mod snapshot;
 pub mod thread;
 pub mod ui;
@@ -10,6 +11,7 @@ use scan::{Scan, Scannable};
 use std::convert::TryInto;
 use std::fmt;
 use winapi::um::winnt;
+use serdes::SerDes;
 
 /// Environment variable with the process identifier of the process to work with.
 /// If the variable if not set (`set PID=...`), it's asked at runtime.
@@ -32,12 +34,19 @@ fn main() {
         let mut buf = Vec::new();
         file.read_to_end(&mut buf).unwrap();
 
+        let ptr_path = bincode::deserialize::<PtrPathBackup>(&buf).unwrap();
+        ptr_path.save(&mut std::io::BufWriter::new(std::fs::File::create("ptrpath.bin").unwrap())).unwrap();
+        let loaded = PtrPathBackup::load(&mut std::io::BufReader::new(std::fs::File::open("ptrpath.bin").unwrap())).unwrap();
+        assert_eq!(ptr_path, loaded);
+
         let PtrPathBackup {
             first_snap,
             first_addr,
             second_snap,
             second_addr,
-        } = bincode::deserialize(&buf).unwrap();
+        } = ptr_path;
+
+
 
         let a = std::time::Instant::now();
         let offsets =
@@ -139,12 +148,14 @@ fn repl_find_value(
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
-struct PtrPathBackup {
-    first_snap: snapshot::Snapshot,
-    first_addr: usize,
-    second_snap: snapshot::Snapshot,
-    second_addr: usize,
+define_serdes! {
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct PtrPathBackup {
+        first_snap: snapshot::Snapshot,
+        first_addr: usize,
+        second_snap: snapshot::Snapshot,
+        second_addr: usize,
+    }
 }
 
 fn maybe_do_find_ptr_path(
