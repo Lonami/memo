@@ -161,12 +161,7 @@ impl Snapshot {
     }
 
     pub fn read_memory(&self, addr: usize, n: usize) -> Option<&[u8]> {
-        let index = match self.blocks.binary_search_by_key(&addr, |b| b.real_addr) {
-            Ok(index) => index,
-            Err(index) => index - 1,
-        };
-
-        let block = &self.blocks[index];
+        let block = &self.blocks[self.get_block_idx(addr)];
         let delta = addr - block.real_addr;
         if delta + n > block.len {
             None
@@ -177,11 +172,14 @@ impl Snapshot {
     }
 
     pub fn is_base_addr(&self, addr: usize) -> bool {
-        let index = match self.blocks.binary_search_by_key(&addr, |b| b.real_addr) {
+        self.blocks[self.get_block_idx(addr)].base
+    }
+
+    pub fn get_block_idx(&self, addr: usize) -> usize {
+        match self.blocks.binary_search_by_key(&addr, |b| b.real_addr) {
             Ok(index) => index,
             Err(index) => index - 1,
-        };
-        self.blocks[index].base
+        }
     }
 
     // Iterate over (memory address, pointer value at said address)
