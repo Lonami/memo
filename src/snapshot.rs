@@ -442,13 +442,7 @@ impl QueuePathFinder {
 
         self.second_snap
             .iter_addr(future_node.second_addr, true)
-            .filter(|(_sra, spv)| {
-                if let Some(offset) = future_node.second_addr.checked_sub(*spv) {
-                    offset <= MAX_OFFSET
-                } else {
-                    false
-                }
-            })
+            .filter(|(_sra, spv)| future_node.second_addr.wrapping_sub(*spv) <= MAX_OFFSET)
             .for_each(|(sra, _spv)| {
                 let mut nodes_walked = self.nodes_walked.lock().unwrap();
                 self.good_finds.lock().unwrap().push(nodes_walked.len());
@@ -461,13 +455,7 @@ impl QueuePathFinder {
         if future_node.depth != 0 {
             self.second_snap
                 .iter_addr(future_node.second_addr, false)
-                .filter(|(_sra, spv)| {
-                    if let Some(offset) = future_node.second_addr.checked_sub(*spv) {
-                        offset <= MAX_OFFSET
-                    } else {
-                        false
-                    }
-                })
+                .filter(|(_sra, spv)| future_node.second_addr.wrapping_sub(*spv) <= MAX_OFFSET)
                 .for_each(|(sra, spv)| {
                     let offset = future_node.second_addr - spv;
                     let first_addr = future_node.first_addr - offset;
