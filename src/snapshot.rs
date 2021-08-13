@@ -459,24 +459,23 @@ impl QueuePathFinder {
                 .for_each(|(sra, spv)| {
                     let offset = future_node.second_addr - spv;
                     let first_addr = future_node.first_addr - offset;
-                    for (fra, fpv) in self.first_snap.iter_addr(future_node.first_addr, false) {
-                        if fpv != first_addr {
-                            continue;
-                        }
-
-                        let mut nodes_walked = self.nodes_walked.lock().unwrap();
-                        self.new_work.lock().unwrap().push(FutureNode {
-                            node_idx: nodes_walked.len(),
-                            first_addr: fra,
-                            second_addr: sra,
-                            depth: future_node.depth - 1,
+                    self.first_snap
+                        .iter_addr(future_node.first_addr, false)
+                        .filter(|(_fra, fpv)| *fpv == first_addr)
+                        .for_each(|(fra, _fpv)| {
+                            let mut nodes_walked = self.nodes_walked.lock().unwrap();
+                            self.new_work.lock().unwrap().push(FutureNode {
+                                node_idx: nodes_walked.len(),
+                                first_addr: fra,
+                                second_addr: sra,
+                                depth: future_node.depth - 1,
+                            });
+                            self.work_cvar.notify_one();
+                            nodes_walked.push(CandidateNode {
+                                parent: future_node.node_idx,
+                                addr: sra,
+                            });
                         });
-                        self.work_cvar.notify_one();
-                        nodes_walked.push(CandidateNode {
-                            parent: future_node.node_idx,
-                            addr: sra,
-                        });
-                    }
                 })
         }
 
