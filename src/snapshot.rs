@@ -259,10 +259,6 @@ impl Snapshot {
         }
     }
 
-    pub fn is_base_addr(&self, addr: usize) -> bool {
-        self.blocks[self.get_block_idx(addr)].base
-    }
-
     pub fn get_block_idx(&self, addr: usize) -> usize {
         match self.blocks.binary_search_by_key(&addr, |b| b.real_addr) {
             Ok(index) => index,
@@ -271,7 +267,7 @@ impl Snapshot {
     }
 
     // Iterate over (memory address, pointer value at said address).
-    pub fn iter_addr(&self, from_addr: usize) -> impl Iterator<Item = (usize, usize)> + '_ {
+    pub fn iter_addr(&self, from_addr: usize) -> AddrIter {
         let block_idx = self.get_block_idx(from_addr);
         let block_map = self.block_idx_pointed_from[block_idx].as_slice();
         let block = block_map.get(0).map(|i| &self.blocks[*i]);
@@ -321,7 +317,7 @@ pub struct AddrIter<'a> {
 }
 
 impl<'a> Iterator for AddrIter<'a> {
-    type Item = (usize, usize);
+    type Item = (bool, usize, usize);
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut block = self.block?;
@@ -342,6 +338,7 @@ impl<'a> Iterator for AddrIter<'a> {
         self.block_offset += 8;
 
         Some((
+            block.base,
             block.real_addr + self.block_offset - 8,
             usize::from_ne_bytes(chunk.try_into().unwrap()),
         ))
@@ -432,10 +429,10 @@ impl QueuePathFinder {
             }
         };
 
-        for (sra, spv) in
+        for (base, sra, spv) in
             self.second_snap
                 .iter_addr(future_node.second_addr)
-                .filter(|(_sra, spv)| {
+                .filter(|(_base, _sra, spv)| {
                     if let Some(offset) = future_node.second_addr.checked_sub(*spv) {
                         offset <= MAX_OFFSET
                     } else {
@@ -443,7 +440,7 @@ impl QueuePathFinder {
                     }
                 })
         {
-            if self.second_snap.is_base_addr(sra) {
+            if base {
                 let mut nodes_walked = self.nodes_walked.lock().unwrap();
                 self.good_finds.lock().unwrap().push(nodes_walked.len());
                 nodes_walked.push(CandidateNode {
@@ -458,7 +455,7 @@ impl QueuePathFinder {
 
             let offset = future_node.second_addr - spv;
             let first_addr = future_node.first_addr - offset;
-            for (fra, fpv) in self.first_snap.iter_addr(future_node.first_addr) {
+            for (_base, fra, fpv) in self.first_snap.iter_addr(future_node.first_addr) {
                 if fpv != first_addr {
                     continue;
                 }
