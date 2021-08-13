@@ -38,12 +38,31 @@ fn main() {
             second_addr,
         } = PtrPathBackup::load(&mut std::io::BufReader::new(file)).unwrap();
 
+        let first_snap_opt = first_snap.clone().into();
+        let second_snap_opt = second_snap.clone().into();
+
+        let bak2 = PtrPathBackupOpt {
+            first_snap_opt,
+            first_addr,
+            second_snap_opt,
+            second_addr,
+        };
+        bak2.save(&mut std::io::BufWriter::new(
+            std::fs::File::create("ptrpath.bin").unwrap(),
+        ))
+        .unwrap();
+        let PtrPathBackupOpt { first_snap_opt, second_snap_opt, .. } = bak2;
+        if true {
+            return;
+        }
+
         let a = std::time::Instant::now();
-        let first_snap_opt = snapshotopt::prepare_optimized_scan(&first_snap.clone().into());
+
+        let first_snap_opt = snapshotopt::prepare_optimized_scan(&first_snap_opt);
         println!("OPTIMIZING FIRST SNAPSHOT TOOK: {:?}", a.elapsed());
 
         let a = std::time::Instant::now();
-        let second_snap_opt = snapshotopt::prepare_optimized_scan(&second_snap.clone().into());
+        let second_snap_opt = snapshotopt::prepare_optimized_scan(&second_snap_opt);
         println!("OPTIMIZING SECOND SNAPSHOT TOOK: {:?}", a.elapsed());
 
         let a = std::time::Instant::now();
@@ -156,6 +175,16 @@ define_serdes! {
         first_snap: snapshot::Snapshot,
         first_addr: usize,
         second_snap: snapshot::Snapshot,
+        second_addr: usize,
+    }
+}
+
+define_serdes! {
+    #[derive(Debug, PartialEq)]
+    struct PtrPathBackupOpt {
+        first_snap_opt: snapshotopt::Snapshot,
+        first_addr: usize,
+        second_snap_opt: snapshotopt::Snapshot,
         second_addr: usize,
     }
 }
