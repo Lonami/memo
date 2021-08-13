@@ -1,4 +1,4 @@
-use crate::snapshot::{Block, Snapshot};
+use crate::snapshot::Block;
 use std::collections::BinaryHeap;
 use std::convert::TryInto;
 use std::num::NonZeroUsize;
@@ -10,7 +10,7 @@ const MAX_OFFSET: usize = 0x400;
 
 define_serdes! {
     #[derive(Clone, Debug, Default, PartialEq)]
-    pub struct SnapshotOpt {
+    pub struct Snapshot {
         pub memory: Vec<u8>,
         pub blocks: Vec<Block>,
         // Has the same length as `blocks`. A given index represents that the
@@ -24,7 +24,7 @@ define_serdes! {
     }
 }
 
-pub fn prepare_optimized_scan(snap: &Snapshot) -> SnapshotOpt {
+pub fn prepare_optimized_scan(snap: &Snapshot) -> Snapshot {
     let mut block_idx_pointed_from = (0..snap.blocks.len())
         .map(|_| std::collections::HashSet::new())
         .collect::<Vec<_>>();
@@ -33,7 +33,7 @@ pub fn prepare_optimized_scan(snap: &Snapshot) -> SnapshotOpt {
     // For each block...
     for (i, block) in snap.blocks.iter().enumerate() {
         // ...scan all the pointer-values...
-        for (ra, pv) in snap.iter_addr() {
+        for (ra, pv) in snap.iter_all_addr() {
             // ...and if any of the pointer-values points inside this block...
             if let Some(delta) = pv.checked_sub(block.real_addr) {
                 if delta < block.len {
@@ -54,7 +54,7 @@ pub fn prepare_optimized_scan(snap: &Snapshot) -> SnapshotOpt {
         })
         .collect::<Vec<_>>();
 
-    SnapshotOpt {
+    Snapshot {
         memory: snap.memory.clone(),
         blocks: snap.blocks.clone(),
         block_idx_pointed_from,
@@ -63,9 +63,9 @@ pub fn prepare_optimized_scan(snap: &Snapshot) -> SnapshotOpt {
 
 // Returns a vector with the vectors of valid offsets.
 pub fn find_pointer_paths(
-    first_snap: SnapshotOpt,
+    first_snap: Snapshot,
     first_addr: usize,
-    second_snap: SnapshotOpt,
+    second_snap: Snapshot,
     second_addr: usize,
 ) -> Vec<Vec<usize>> {
     const TOP_DEPTH: u8 = 7;
@@ -153,7 +153,17 @@ fn run_find_pointer_paths(qpf: Arc<QueuePathFinder>) {
     while qpf.step() {}
 }
 
-impl SnapshotOpt {
+impl From<crate::snapshot::Snapshot> for Snapshot {
+    fn from(snap: crate::snapshot::Snapshot) -> Self {
+        Self {
+            memory: snap.memory,
+            blocks: snap.blocks,
+            block_idx_pointed_from: Vec::new(),
+        }
+    }
+}
+
+impl Snapshot {
     pub fn read_memory(&self, addr: usize, n: usize) -> Option<&[u8]> {
         let block = &self.blocks[self.get_block_idx(addr)];
         let delta = addr - block.real_addr;
@@ -176,7 +186,7 @@ impl SnapshotOpt {
         }
     }
 
-    // Iterate over (memory address, pointer value at said address)
+    // Iterate over (memory address, pointer value at said address).
     pub fn iter_addr(&self, from_addr: usize) -> impl Iterator<Item = (usize, usize)> + '_ {
         let block_idx = self.get_block_idx(from_addr);
         let block_map = self.block_idx_pointed_from[block_idx].as_slice();
@@ -189,6 +199,25 @@ impl SnapshotOpt {
             block_map,
             block_map_idx: NonZeroUsize::new(1).unwrap(),
         }
+    }
+
+    pub fn iter_all_addr(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        let mut blocks = self.blocks.iter().peekable();
+        self.memory
+            .chunks_exact(8)
+            .enumerate()
+            .map(move |(i, chunk)| {
+                let mut block = *blocks.peek().unwrap();
+                if i * 8 >= block.mem_offset + block.len {
+                    // Roll over to the next block.
+                    block = blocks.next().unwrap();
+                }
+
+                (
+                    block.real_addr + (i * 8 - block.mem_offset),
+                    usize::from_ne_bytes(chunk.try_into().unwrap()),
+                )
+            })
     }
 }
 
@@ -247,8 +276,8 @@ struct FutureNode {
 
 #[derive(Debug)]
 struct QueuePathFinder {
-    first_snap: SnapshotOpt,
-    second_snap: SnapshotOpt,
+    first_snap: Snapshot,
+    second_snap: Snapshot,
     /// Indices of `nodes_walked` which are "good" (i.e. have reached a base address).
     good_finds: Mutex<Vec<usize>>,
     /// Shared "tree" of nodes we've walked over, so all threads can access and reference them.
@@ -263,9 +292,9 @@ struct QueuePathFinder {
 }
 
 struct QueuePathFinderBuilder {
-    first_snap: SnapshotOpt,
+    first_snap: Snapshot,
     first_addr: usize,
-    second_snap: SnapshotOpt,
+    second_snap: Snapshot,
     second_addr: usize,
     depth: u8,
 }

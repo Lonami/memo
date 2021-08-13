@@ -39,11 +39,11 @@ fn main() {
         } = PtrPathBackup::load(&mut std::io::BufReader::new(file)).unwrap();
 
         let a = std::time::Instant::now();
-        let first_snap_opt = snapshotopt::prepare_optimized_scan(&first_snap);
+        let first_snap_opt = snapshotopt::prepare_optimized_scan(&first_snap.clone().into());
         println!("OPTIMIZING FIRST SNAPSHOT TOOK: {:?}", a.elapsed());
 
         let a = std::time::Instant::now();
-        let second_snap_opt = snapshotopt::prepare_optimized_scan(&second_snap);
+        let second_snap_opt = snapshotopt::prepare_optimized_scan(&second_snap.clone().into());
         println!("OPTIMIZING SECOND SNAPSHOT TOOK: {:?}", a.elapsed());
 
         let a = std::time::Instant::now();
