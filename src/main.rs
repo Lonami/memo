@@ -55,8 +55,7 @@ fn main() {
         let offsets2 = snapshotopt::find_pointer_paths(first_snap_opt, first_addr, second_snap_opt, second_addr);
         println!("FINDING POINTER PATHS (OPTIMIZED) TOOK: {:?}", a.elapsed());
 
-        // For some reason commenting this out increases the UNOPTIMIZED runtime from ~310ms to ~480ms. What?
-        // assert_eq!(offsets.len(), offsets2.len());
+        assert_eq!(offsets.len(), offsets2.len());
 
         println!("Here are the offsets I found:");
         let base = 0usize;

@@ -71,25 +71,19 @@ pub fn find_pointer_paths(
     let good_finds = qpf.good_finds.into_inner().unwrap();
     let nodes_walked = qpf.nodes_walked.into_inner().unwrap();
 
-    println!("Very parent: {:x}", second_addr);
-
     good_finds
         .into_iter()
         .map(|node_idx| {
-            println!("Good find {}:", node_idx);
-
             let mut addresses = Vec::with_capacity((TOP_DEPTH + 1) as usize);
             // Walk the linked list.
             let mut node = nodes_walked[node_idx].clone();
             addresses.push(node.addr);
-            println!("- {:x} (block {})", node.addr, second_snap.get_block_idx(node.addr));
 
             // A parent pointing to itself represents the end.
             // This is similar to trying to `cd ..` when already at `/`.
             while node.parent != nodes_walked[node.parent].parent {
                 node = nodes_walked[node.parent].clone();
                 addresses.push(node.addr);
-            println!("- {:x} (block {})", node.addr, second_snap.get_block_idx(node.addr));
             }
 
             // Now update the list of addresses to turn them into offsets.

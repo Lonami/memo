@@ -14,10 +14,12 @@ define_serdes! {
         pub memory: Vec<u8>,
         pub blocks: Vec<Block>,
         // Has the same length as `blocks`. A given index represents that the
-        // block at this index (very likely) have pointer-values that point to
-        // the blocks in the child indices.
-        pub block_idx_points_to: Vec<Vec<usize>>,
-        // Inverse of `block_idx_points_to`.
+        // block at this index (very likely) is pointed-to from pointer-values
+        // in the blocks in the child indices.
+        //
+        // For example, if `map[4] = [1, 4, 7]`, then all of `blocks[1]`,
+        // `blocks[4]` and `blocks[7]` have aligned pointer-values in their
+        // corresponding memory that point into `blocks[4]`.
         pub block_idx_pointed_from: Vec<Vec<usize>>,
     }
 }
@@ -42,25 +44,7 @@ pub fn prepare_optimized_scan(snap: &Snapshot) -> SnapshotOpt {
         }
     }
 
-    // Build the reverse map.
-    let mut block_idx_points_to = (0..snap.blocks.len())
-        .map(|_| std::collections::HashSet::new())
-        .collect::<Vec<_>>();
-    for (i, set) in block_idx_pointed_from.iter().enumerate() {
-        for j in set.iter().copied() {
-            block_idx_points_to[j].insert(i);
-        }
-    }
-
-    // Convert sets into sorted vectors.
-    let block_idx_points_to = block_idx_points_to
-        .into_iter()
-        .map(|set| {
-            let mut vec = set.into_iter().collect::<Vec<_>>();
-            vec.sort();
-            vec
-        })
-        .collect::<Vec<_>>();
+    // Convert set into a sorted vector.
     let block_idx_pointed_from = block_idx_pointed_from
         .into_iter()
         .map(|set| {
@@ -70,19 +54,9 @@ pub fn prepare_optimized_scan(snap: &Snapshot) -> SnapshotOpt {
         })
         .collect::<Vec<_>>();
 
-    let mut lens = block_idx_pointed_from.iter().map(|set| set.len()).collect::<Vec<_>>();
-    lens.sort();
-    let mean = lens.iter().sum::<usize>() as f32 / lens.len() as f32;
-    println!("Average # blocks to scan in a block: {:.2}", mean);
-    let median = lens[lens.len() / 2];
-    println!("Median # blocks to scan in a block: {}", median);
-    let sd = (lens.iter().map(|elem| (*elem as f32 - mean).powi(2)).sum::<f32>() / lens.len() as f32).sqrt();
-    println!("Standard Deviation in {} blocks: {:.2}", lens.len(), sd);
-
     SnapshotOpt {
         memory: snap.memory.clone(),
         blocks: snap.blocks.clone(),
-        block_idx_points_to,
         block_idx_pointed_from,
     }
 }
