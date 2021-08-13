@@ -3,6 +3,7 @@ pub mod process;
 pub mod scan;
 pub mod serdes;
 pub mod snapshot;
+pub mod snapshotopt;
 pub mod thread;
 pub mod ui;
 
@@ -38,9 +39,23 @@ fn main() {
         } = PtrPathBackup::load(&mut std::io::BufReader::new(file)).unwrap();
 
         let a = std::time::Instant::now();
+        let first_snap_opt = snapshotopt::prepare_optimized_scan(&first_snap);
+        println!("OPTIMIZING FIRST SNAPSHOT TOOK: {:?}", a.elapsed());
+
+        let a = std::time::Instant::now();
+        let second_snap_opt = snapshotopt::prepare_optimized_scan(&second_snap);
+        println!("OPTIMIZING SECOND SNAPSHOT TOOK: {:?}", a.elapsed());
+
+        let a = std::time::Instant::now();
         let offsets =
             snapshot::find_pointer_paths(first_snap, first_addr, second_snap, second_addr);
-        dbg!(a.elapsed());
+        println!("FINDING POINTER PATHS (UNOPTIMIZED) TOOK: {:?}", a.elapsed());
+
+        let a = std::time::Instant::now();
+        let offsets2 = snapshotopt::find_pointer_paths(first_snap_opt, first_addr, second_snap_opt, second_addr);
+        println!("FINDING POINTER PATHS (OPTIMIZED) TOOK: {:?}", a.elapsed());
+
+        assert_eq!(offsets.len(), offsets2.len());
 
         println!("Here are the offsets I found:");
         let base = 0usize;
