@@ -3,7 +3,6 @@ pub mod process;
 pub mod scan;
 pub mod serdes;
 pub mod snapshot;
-pub mod snapshotopt;
 pub mod thread;
 pub mod ui;
 
@@ -30,7 +29,7 @@ impl fmt::Display for ProcessItem {
 }
 
 fn main() {
-    if let Ok(file) = std::fs::File::open("ptrpath.bak") {
+    if let Ok(file) = std::fs::File::open("ptrpath.bin") {
         let PtrPathBackup {
             first_snap,
             first_addr,
@@ -38,43 +37,24 @@ fn main() {
             second_addr,
         } = PtrPathBackup::load(&mut std::io::BufReader::new(file)).unwrap();
 
-        let first_snap_opt = first_snap.clone().into();
-        let second_snap_opt = second_snap.clone().into();
-
-        let bak2 = PtrPathBackupOpt {
-            first_snap_opt,
-            first_addr,
-            second_snap_opt,
-            second_addr,
-        };
-        bak2.save(&mut std::io::BufWriter::new(
-            std::fs::File::create("ptrpath.bin").unwrap(),
-        ))
-        .unwrap();
-        let PtrPathBackupOpt { first_snap_opt, second_snap_opt, .. } = bak2;
-        if true {
-            return;
-        }
-
         let a = std::time::Instant::now();
-
-        let first_snap_opt = snapshotopt::prepare_optimized_scan(&first_snap_opt);
+        let first_snap_opt = snapshot::prepare_optimized_scan(&first_snap);
         println!("OPTIMIZING FIRST SNAPSHOT TOOK: {:?}", a.elapsed());
 
         let a = std::time::Instant::now();
-        let second_snap_opt = snapshotopt::prepare_optimized_scan(&second_snap_opt);
+        let second_snap_opt = snapshot::prepare_optimized_scan(&second_snap);
         println!("OPTIMIZING SECOND SNAPSHOT TOOK: {:?}", a.elapsed());
 
-        let a = std::time::Instant::now();
-        let offsets =
-            snapshot::find_pointer_paths(first_snap, first_addr, second_snap, second_addr);
-        println!("FINDING POINTER PATHS (UNOPTIMIZED) TOOK: {:?}", a.elapsed());
+        // let a = std::time::Instant::now();
+        // let offsets =
+        //     snapshot::find_pointer_paths(first_snap, first_addr, second_snap, second_addr);
+        // println!("FINDING POINTER PATHS (UNOPTIMIZED) TOOK: {:?}", a.elapsed());
 
         let a = std::time::Instant::now();
-        let offsets2 = snapshotopt::find_pointer_paths(first_snap_opt, first_addr, second_snap_opt, second_addr);
+        let offsets = snapshot::find_pointer_paths(first_snap_opt, first_addr, second_snap_opt, second_addr);
         println!("FINDING POINTER PATHS (OPTIMIZED) TOOK: {:?}", a.elapsed());
 
-        assert_eq!(offsets.len(), offsets2.len());
+        // assert_eq!(offsets.len(), offsets2.len());
 
         println!("Here are the offsets I found:");
         let base = 0usize;
@@ -175,16 +155,6 @@ define_serdes! {
         first_snap: snapshot::Snapshot,
         first_addr: usize,
         second_snap: snapshot::Snapshot,
-        second_addr: usize,
-    }
-}
-
-define_serdes! {
-    #[derive(Debug, PartialEq)]
-    struct PtrPathBackupOpt {
-        first_snap_opt: snapshotopt::Snapshot,
-        first_addr: usize,
-        second_snap_opt: snapshotopt::Snapshot,
         second_addr: usize,
     }
 }

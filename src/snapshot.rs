@@ -1,6 +1,7 @@
 use crate::Process;
 use std::collections::BinaryHeap;
 use std::convert::TryInto;
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -22,6 +23,51 @@ define_serdes! {
     pub struct Snapshot {
         pub memory: Vec<u8>,
         pub blocks: Vec<Block>,
+        // Has the same length as `blocks`. A given index represents that the
+        // block at this index (very likely) is pointed-to from pointer-values
+        // in the blocks in the child indices.
+        //
+        // For example, if `map[4] = [1, 4, 7]`, then all of `blocks[1]`,
+        // `blocks[4]` and `blocks[7]` have aligned pointer-values in their
+        // corresponding memory that point into `blocks[4]`.
+        pub block_idx_pointed_from: Vec<Vec<usize>>,
+    }
+}
+
+pub fn prepare_optimized_scan(snap: &Snapshot) -> Snapshot {
+    let mut block_idx_pointed_from = (0..snap.blocks.len())
+        .map(|_| std::collections::HashSet::new())
+        .collect::<Vec<_>>();
+
+    // TODO this can be trivially parallelized
+    // For each block...
+    for (i, block) in snap.blocks.iter().enumerate() {
+        // ...scan all the pointer-values...
+        for (ra, pv) in snap.iter_all_addr() {
+            // ...and if any of the pointer-values points inside this block...
+            if let Some(delta) = pv.checked_sub(block.real_addr) {
+                if delta < block.len {
+                    // ...then we know that the block with this pointer-value points to our original block.
+                    block_idx_pointed_from[i].insert(snap.get_block_idx(ra));
+                }
+            }
+        }
+    }
+
+    // Convert set into a sorted vector.
+    let block_idx_pointed_from = block_idx_pointed_from
+        .into_iter()
+        .map(|set| {
+            let mut vec = set.into_iter().collect::<Vec<_>>();
+            vec.sort();
+            vec
+        })
+        .collect::<Vec<_>>();
+
+    Snapshot {
+        memory: snap.memory.clone(),
+        blocks: snap.blocks.clone(),
+        block_idx_pointed_from,
     }
 }
 
@@ -113,8 +159,6 @@ pub fn find_pointer_paths(
         .collect()
 }
 
-// For some reason, the free-standing function seems to be faster than putting
-// it inside the `impl`, or else the runtime is increased from ~360ms to ~410ms.
 fn run_find_pointer_paths(qpf: Arc<QueuePathFinder>) {
     while qpf.step() {}
 }
@@ -155,9 +199,15 @@ impl Snapshot {
                 }
                 Err(_) => None,
             })
-            .collect();
+            .collect::<Vec<_>>();
 
-        Self { memory, blocks }
+        // Without running the "optimization", we have to assume every block
+        // can point to any other block (such `block_map` is cloned for every
+        // block index).
+        let block_map = (0..blocks.len()).collect::<Vec<_>>();
+        let block_idx_pointed_from = (0..blocks.len()).map(|_| block_map.clone()).collect::<Vec<_>>();
+
+        Self { memory, blocks, block_idx_pointed_from }
     }
 
     pub fn read_memory(&self, addr: usize, n: usize) -> Option<&[u8]> {
@@ -182,46 +232,75 @@ impl Snapshot {
         }
     }
 
-    // Iterate over (memory address, pointer value at said address)
-    pub fn iter_addr(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+    // Iterate over (memory address, pointer value at said address).
+    pub fn iter_addr(&self, from_addr: usize) -> impl Iterator<Item = (usize, usize)> + '_ {
+        let block_idx = self.get_block_idx(from_addr);
+        let block_map = self.block_idx_pointed_from[block_idx].as_slice();
+        let block = block_map.get(0).map(|i| &self.blocks[*i]);
         AddrIter {
-            blocks: self.blocks.as_slice(),
+            block,
             memory: self.memory.as_slice(),
-            offset: 0,
+            block_offset: 0,
+            blocks: self.blocks.as_slice(),
+            block_map,
+            block_map_idx: NonZeroUsize::new(1).unwrap(),
         }
+    }
+
+    pub fn iter_all_addr(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        let mut blocks = self.blocks.iter().peekable();
+        self.memory
+            .chunks_exact(8)
+            .enumerate()
+            .map(move |(i, chunk)| {
+                let mut block = *blocks.peek().unwrap();
+                if i * 8 >= block.mem_offset + block.len {
+                    // Roll over to the next block.
+                    block = blocks.next().unwrap();
+                }
+
+                (
+                    block.real_addr + (i * 8 - block.mem_offset),
+                    usize::from_ne_bytes(chunk.try_into().unwrap()),
+                )
+            })
     }
 }
 
-// A naive custom iterator (storing snapshot, block index and memory offset)
-// increases the runtime from ~360ms to ~890ms. However, a somewhat smarter
-// one (such as this one) decreases it from ~360ms to ~340ms.
 pub struct AddrIter<'a> {
-    blocks: &'a [Block],
+    // Current block.
+    block: Option<&'a Block>,
+    // All the memory.
     memory: &'a [u8],
-    offset: usize,
+    // Offset within a block.
+    block_offset: usize,
+    // All blocks.
+    blocks: &'a [Block],
+    // Map of indices for the block indices we'll check.
+    block_map: &'a [usize],
+    // Current index. Starts at one because `block` is pre-initialized to the zeroth element.
+    block_map_idx: NonZeroUsize,
 }
 
 impl<'a> Iterator for AddrIter<'a> {
     type Item = (usize, usize);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.memory.is_empty() {
-            return None;
-        }
-
-        if self.offset >= self.blocks[0].mem_offset + self.blocks[0].len {
+        let mut block = self.block?;
+        if self.block_offset >= block.len {
             // Roll over to the next block.
-            self.blocks = &self.blocks[1..];
+            self.block = self.block_map.get(self.block_map_idx.get()).map(|i| &self.blocks[*i]);
+            block = self.block?;
+            self.block_offset = 0;
+            self.block_map_idx = NonZeroUsize::new(self.block_map_idx.get() + 1).unwrap();
         }
 
-        // Updating chunk and memory before the `if` check above increases
-        // runtime from ~300ms to ~350ms.
-        let chunk = &self.memory[..8];
-        self.memory = &self.memory[8..];
-        self.offset += 8;
+        // TODO very inefficient
+        let chunk = &self.memory[block.mem_offset + self.block_offset..block.mem_offset + self.block_offset + 8];
+        self.block_offset += 8;
 
         Some((
-            self.blocks[0].real_addr + (self.offset - 8 - self.blocks[0].mem_offset),
+            block.real_addr + self.block_offset - 8,
             usize::from_ne_bytes(chunk.try_into().unwrap()),
         ))
     }
@@ -235,9 +314,7 @@ struct CandidateNode {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct FutureNode {
-    // Changing the depth for an `usize` increases runtime from ~300ms to ~420ms.
     depth: u8,
-    // Changing the node index for an `u32` increases runtime from ~300ms to ~360ms.
     node_idx: usize,
     first_addr: usize,
     second_addr: usize,
@@ -258,7 +335,6 @@ struct QueuePathFinder {
     /// How many threads are working right now.
     /// Once there is no work and nobody is working, exit, as there won't ever be more work.
     working_now: AtomicU8,
-    // Adding another `usize` here would increase the runtime from ~300ms to ~420ms.
 }
 
 struct QueuePathFinderBuilder {
@@ -296,10 +372,6 @@ impl QueuePathFinderBuilder {
 }
 
 impl QueuePathFinder {
-    // Changing `step` into a `run` with a `loop` that simply returns
-    // when done increases the runtime from ~360ms to ~410ms.
-    //
-    // On the tests, this method is "only" called 34 times!
     pub fn step(&self) -> bool {
         let future_node = {
             let mut new_work = self.new_work.lock().unwrap();
@@ -318,11 +390,7 @@ impl QueuePathFinder {
             }
         };
 
-        // Moving the `filter` inside the loop and changing it with `continue`
-        // worsens the performance. Also, using internal iteration `for_each`
-        // runtime is also increased (either in the outer or inner loop).
-        for (sra, spv) in self.second_snap.iter_addr().filter(|(_sra, spv)| {
-            // Changing this for a `wrapping_sub` increases runtime from ~300ms to ~480ms.
+        for (sra, spv) in self.second_snap.iter_addr(future_node.second_addr).filter(|(_sra, spv)| {
             if let Some(offset) = future_node.second_addr.checked_sub(*spv) {
                 offset <= MAX_OFFSET
             } else {
@@ -338,18 +406,13 @@ impl QueuePathFinder {
                 });
                 continue;
             }
-            // This check doesn't run a lot. Hoisting it and duplicating the code that checks for
-            // base addreses increases the runtime from ~500ms to ~600ms.
             if future_node.depth == 0 {
                 continue;
             }
 
             let offset = future_node.second_addr - spv;
-            // Optimization: (fpv + offset = fra) -> (fpv = fra - offset).
-            // This used to worsen performance by ~50ms, but without `filter`,
-            // it actually improves it by ~20ms.
             let first_addr = future_node.first_addr - offset;
-            for (fra, fpv) in self.first_snap.iter_addr() {
+            for (fra, fpv) in self.first_snap.iter_addr(future_node.first_addr) {
                 if fpv != first_addr {
                     continue;
                 }
@@ -361,8 +424,6 @@ impl QueuePathFinder {
                     second_addr: sra,
                     depth: future_node.depth - 1,
                 });
-                // Removing this line and placing an unconditional `notify_all` after
-                // `working_now -= 1` instead increases the runtime from ~500ms to ~650ms.
                 self.work_cvar.notify_one();
                 nodes_walked.push(CandidateNode {
                     parent: future_node.node_idx,
