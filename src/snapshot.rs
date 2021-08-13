@@ -1,5 +1,5 @@
 use crate::Process;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashSet};
 use std::convert::TryInto;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -36,22 +36,59 @@ define_serdes! {
 
 pub fn prepare_optimized_scan(snap: &Snapshot) -> Snapshot {
     let mut block_idx_pointed_from = (0..snap.blocks.len())
-        .map(|_| std::collections::HashSet::new())
+        .map(|_| HashSet::new())
         .collect::<Vec<_>>();
 
-    // TODO this can be trivially parallelized
-    // For each block...
-    for (i, block) in snap.blocks.iter().enumerate() {
-        // ...scan all the pointer-values...
-        for (ra, pv) in snap.iter_all_addr() {
-            // ...and if any of the pointer-values points inside this block...
-            if let Some(delta) = pv.checked_sub(block.real_addr) {
-                if delta < block.len {
-                    // ...then we know that the block with this pointer-value points to our original block.
-                    block_idx_pointed_from[i].insert(snap.get_block_idx(ra));
+    // SAFETY: we need the 'static lifetime for the threads, but they're not actually used for the
+    // 'static lifetime, because we make sure to join them before.
+    let (snap_ref, bipf_tail) = unsafe {
+        (
+            std::mem::transmute::<&'_ _, &'static _>(snap),
+            std::mem::transmute::<&'_ mut _, &'static mut [_]>(
+                block_idx_pointed_from.as_mut_slice(),
+            ),
+        )
+    };
+
+    // Split the workload of filling `block_idx_pointed_from` by making multiple chunks and
+    // filling each of them on its own thread.
+    let chunk_size = block_idx_pointed_from.len() / 4;
+    let (bipf_a, bipf_tail) = bipf_tail.split_at_mut(chunk_size);
+    let (bipf_b, bipf_tail) = bipf_tail.split_at_mut(chunk_size);
+    let (bipf_c, bipf_tail) = bipf_tail.split_at_mut(chunk_size);
+
+    fn fill_map(snap: &Snapshot, block_map: &mut [HashSet<usize>], offset: usize) {
+        // For each block...
+        for (i, block) in snap
+            .blocks
+            .iter()
+            .skip(offset)
+            .take(block_map.len())
+            .enumerate()
+        {
+            // ...scan all the pointer-values...
+            for (ra, pv) in snap.iter_all_addr() {
+                // ...and if any of the pointer-values points inside this block...
+                if let Some(delta) = pv.checked_sub(block.real_addr) {
+                    if delta < block.len {
+                        // ...then we know that the block with this pointer-value points to our original block.
+                        block_map[i].insert(snap.get_block_idx(ra));
+                    }
                 }
             }
         }
+    }
+
+    let threads = [
+        thread::spawn(move || fill_map(snap_ref, bipf_a, chunk_size * 0)),
+        thread::spawn(move || fill_map(snap_ref, bipf_b, chunk_size * 1)),
+        thread::spawn(move || fill_map(snap_ref, bipf_c, chunk_size * 2)),
+    ];
+    fill_map(snap_ref, bipf_tail, chunk_size * 3);
+
+    for thread in threads {
+        // Ignore errors or else threads could actually refer to the 'static references after drop.
+        drop(thread.join());
     }
 
     // Convert set into a sorted vector.
@@ -59,6 +96,8 @@ pub fn prepare_optimized_scan(snap: &Snapshot) -> Snapshot {
         .into_iter()
         .map(|set| {
             let mut vec = set.into_iter().collect::<Vec<_>>();
+            // TODO would it help to sort by "closest block" first?
+            // and stop scanning after a match in any block is found?
             vec.sort();
             vec
         })
