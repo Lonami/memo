@@ -31,11 +31,27 @@ impl fmt::Display for ProcessItem {
 fn main() {
     if let Ok(file) = std::fs::File::open("ptrpath.bin") {
         let PtrPathBackup {
-            first_snap,
+            mut first_snap,
             first_addr,
-            second_snap,
+            mut second_snap,
             second_addr,
         } = PtrPathBackup::load(&mut std::io::BufReader::new(file)).unwrap();
+
+        // Manually fix the default block_idx_pointed_from (was saved empty).
+        let block_map = (0..first_snap.blocks.len()).collect::<Vec<_>>();
+        let block_idx_pointed_from = (0..first_snap.blocks.len())
+            .map(|_| block_map.clone())
+            .collect::<Vec<_>>();
+        first_snap.block_idx_pointed_from = block_idx_pointed_from.clone();
+        second_snap.block_idx_pointed_from = block_idx_pointed_from.clone();
+
+        let a = std::time::Instant::now();
+        let offsets =
+            snapshot::find_pointer_paths(first_snap.clone(), first_addr, second_snap.clone(), second_addr);
+        println!(
+            "FINDING POINTER PATHS (UNOPTIMIZED) TOOK: {:?}",
+            a.elapsed()
+        );
 
         let a = std::time::Instant::now();
         let first_snap_opt = snapshot::prepare_optimized_scan(&first_snap);
@@ -45,17 +61,12 @@ fn main() {
         let second_snap_opt = snapshot::prepare_optimized_scan(&second_snap);
         println!("OPTIMIZING SECOND SNAPSHOT TOOK: {:?}", a.elapsed());
 
-        // let a = std::time::Instant::now();
-        // let offsets =
-        //     snapshot::find_pointer_paths(first_snap, first_addr, second_snap, second_addr);
-        // println!("FINDING POINTER PATHS (UNOPTIMIZED) TOOK: {:?}", a.elapsed());
-
         let a = std::time::Instant::now();
-        let offsets =
+        let offsets2 =
             snapshot::find_pointer_paths(first_snap_opt, first_addr, second_snap_opt, second_addr);
         println!("FINDING POINTER PATHS (OPTIMIZED) TOOK: {:?}", a.elapsed());
 
-        // assert_eq!(offsets.len(), offsets2.len());
+        assert_eq!(offsets.len(), offsets2.len());
 
         println!("Here are the offsets I found:");
         let base = 0usize;
