@@ -344,15 +344,17 @@ impl<'a> Iterator for AddrIter<'a> {
             self.block_offset = 0;
         }
 
-        // TODO very inefficient
-        let chunk = &self.memory
-            [block.mem_offset + self.block_offset..block.mem_offset + self.block_offset + 8];
+        let ret = Some((
+            block.real_addr + self.block_offset,
+            usize::from_ne_bytes(
+                self.memory[block.mem_offset + self.block_offset
+                    ..block.mem_offset + self.block_offset + 8]
+                    .try_into()
+                    .unwrap(),
+            ),
+        ));
         self.block_offset += 8;
-
-        Some((
-            block.real_addr + self.block_offset - 8,
-            usize::from_ne_bytes(chunk.try_into().unwrap()),
-        ))
+        ret
     }
 }
 
