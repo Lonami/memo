@@ -267,7 +267,7 @@ impl Snapshot {
     }
 
     // Iterate over (memory address, pointer value at said address).
-    pub fn iter_addr(&self, from_addr: usize) -> AddrIter {
+    pub fn iter_addr(&self, from_addr: usize, base: bool) -> AddrIter {
         let block_idx = self.get_block_idx(from_addr);
         let block_map = self.block_idx_pointed_from[block_idx].as_slice();
         let block = block_map.get(0).map(|i| &self.blocks[*i]);
@@ -278,6 +278,7 @@ impl Snapshot {
             blocks: self.blocks.as_slice(),
             block_map,
             block_map_idx: NonZeroUsize::new(1).unwrap(),
+            base,
         }
     }
 
@@ -314,22 +315,33 @@ pub struct AddrIter<'a> {
     block_map: &'a [usize],
     // Current index. Starts at one because `block` is pre-initialized to the zeroth element.
     block_map_idx: NonZeroUsize,
+    // The `base` value of the block an address corresponds to for it to be yielded.
+    base: bool,
 }
 
 impl<'a> Iterator for AddrIter<'a> {
-    type Item = (bool, usize, usize);
+    type Item = (usize, usize);
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut block = self.block?;
         if self.block_offset >= block.len {
-            // Roll over to the next block.
-            self.block = self
-                .block_map
-                .get(self.block_map_idx.get())
-                .map(|i| &self.blocks[*i]);
-            block = self.block?;
+            loop {
+                // Roll over to the next block.
+                self.block = self
+                    .block_map
+                    .get(self.block_map_idx.get())
+                    .map(|i| &self.blocks[*i]);
+                block = self.block?;
+                self.block_map_idx = NonZeroUsize::new(self.block_map_idx.get() + 1).unwrap();
+
+                if block.base == self.base {
+                    break;
+                } else {
+                    continue;
+                }
+            }
+
             self.block_offset = 0;
-            self.block_map_idx = NonZeroUsize::new(self.block_map_idx.get() + 1).unwrap();
         }
 
         // TODO very inefficient
@@ -338,7 +350,6 @@ impl<'a> Iterator for AddrIter<'a> {
         self.block_offset += 8;
 
         Some((
-            block.base,
             block.real_addr + self.block_offset - 8,
             usize::from_ne_bytes(chunk.try_into().unwrap()),
         ))
@@ -429,50 +440,56 @@ impl QueuePathFinder {
             }
         };
 
-        for (base, sra, spv) in
-            self.second_snap
-                .iter_addr(future_node.second_addr)
-                .filter(|(_base, _sra, spv)| {
-                    if let Some(offset) = future_node.second_addr.checked_sub(*spv) {
-                        offset <= MAX_OFFSET
-                    } else {
-                        false
-                    }
-                })
-        {
-            if base {
+        self.second_snap
+            .iter_addr(future_node.second_addr, true)
+            .filter(|(_sra, spv)| {
+                if let Some(offset) = future_node.second_addr.checked_sub(*spv) {
+                    offset <= MAX_OFFSET
+                } else {
+                    false
+                }
+            })
+            .for_each(|(sra, _spv)| {
                 let mut nodes_walked = self.nodes_walked.lock().unwrap();
                 self.good_finds.lock().unwrap().push(nodes_walked.len());
                 nodes_walked.push(CandidateNode {
                     parent: future_node.node_idx,
                     addr: sra,
                 });
-                continue;
-            }
-            if future_node.depth == 0 {
-                continue;
-            }
+            });
 
-            let offset = future_node.second_addr - spv;
-            let first_addr = future_node.first_addr - offset;
-            for (_base, fra, fpv) in self.first_snap.iter_addr(future_node.first_addr) {
-                if fpv != first_addr {
-                    continue;
-                }
+        if future_node.depth != 0 {
+            self.second_snap
+                .iter_addr(future_node.second_addr, false)
+                .filter(|(_sra, spv)| {
+                    if let Some(offset) = future_node.second_addr.checked_sub(*spv) {
+                        offset <= MAX_OFFSET
+                    } else {
+                        false
+                    }
+                })
+                .for_each(|(sra, spv)| {
+                    let offset = future_node.second_addr - spv;
+                    let first_addr = future_node.first_addr - offset;
+                    for (fra, fpv) in self.first_snap.iter_addr(future_node.first_addr, false) {
+                        if fpv != first_addr {
+                            continue;
+                        }
 
-                let mut nodes_walked = self.nodes_walked.lock().unwrap();
-                self.new_work.lock().unwrap().push(FutureNode {
-                    node_idx: nodes_walked.len(),
-                    first_addr: fra,
-                    second_addr: sra,
-                    depth: future_node.depth - 1,
-                });
-                self.work_cvar.notify_one();
-                nodes_walked.push(CandidateNode {
-                    parent: future_node.node_idx,
-                    addr: sra,
-                });
-            }
+                        let mut nodes_walked = self.nodes_walked.lock().unwrap();
+                        self.new_work.lock().unwrap().push(FutureNode {
+                            node_idx: nodes_walked.len(),
+                            first_addr: fra,
+                            second_addr: sra,
+                            depth: future_node.depth - 1,
+                        });
+                        self.work_cvar.notify_one();
+                        nodes_walked.push(CandidateNode {
+                            parent: future_node.node_idx,
+                            addr: sra,
+                        });
+                    }
+                })
         }
 
         if self.working_now.fetch_sub(1, Ordering::SeqCst) == 1 {
