@@ -205,9 +205,15 @@ impl Snapshot {
         // can point to any other block (such `block_map` is cloned for every
         // block index).
         let block_map = (0..blocks.len()).collect::<Vec<_>>();
-        let block_idx_pointed_from = (0..blocks.len()).map(|_| block_map.clone()).collect::<Vec<_>>();
+        let block_idx_pointed_from = (0..blocks.len())
+            .map(|_| block_map.clone())
+            .collect::<Vec<_>>();
 
-        Self { memory, blocks, block_idx_pointed_from }
+        Self {
+            memory,
+            blocks,
+            block_idx_pointed_from,
+        }
     }
 
     pub fn read_memory(&self, addr: usize, n: usize) -> Option<&[u8]> {
@@ -289,14 +295,18 @@ impl<'a> Iterator for AddrIter<'a> {
         let mut block = self.block?;
         if self.block_offset >= block.len {
             // Roll over to the next block.
-            self.block = self.block_map.get(self.block_map_idx.get()).map(|i| &self.blocks[*i]);
+            self.block = self
+                .block_map
+                .get(self.block_map_idx.get())
+                .map(|i| &self.blocks[*i]);
             block = self.block?;
             self.block_offset = 0;
             self.block_map_idx = NonZeroUsize::new(self.block_map_idx.get() + 1).unwrap();
         }
 
         // TODO very inefficient
-        let chunk = &self.memory[block.mem_offset + self.block_offset..block.mem_offset + self.block_offset + 8];
+        let chunk = &self.memory
+            [block.mem_offset + self.block_offset..block.mem_offset + self.block_offset + 8];
         self.block_offset += 8;
 
         Some((
@@ -390,13 +400,17 @@ impl QueuePathFinder {
             }
         };
 
-        for (sra, spv) in self.second_snap.iter_addr(future_node.second_addr).filter(|(_sra, spv)| {
-            if let Some(offset) = future_node.second_addr.checked_sub(*spv) {
-                offset <= MAX_OFFSET
-            } else {
-                false
-            }
-        }) {
+        for (sra, spv) in
+            self.second_snap
+                .iter_addr(future_node.second_addr)
+                .filter(|(_sra, spv)| {
+                    if let Some(offset) = future_node.second_addr.checked_sub(*spv) {
+                        offset <= MAX_OFFSET
+                    } else {
+                        false
+                    }
+                })
+        {
             if self.second_snap.is_base_addr(sra) {
                 let mut nodes_walked = self.nodes_walked.lock().unwrap();
                 self.good_finds.lock().unwrap().push(nodes_walked.len());

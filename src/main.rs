@@ -51,7 +51,8 @@ fn main() {
         // println!("FINDING POINTER PATHS (UNOPTIMIZED) TOOK: {:?}", a.elapsed());
 
         let a = std::time::Instant::now();
-        let offsets = snapshot::find_pointer_paths(first_snap_opt, first_addr, second_snap_opt, second_addr);
+        let offsets =
+            snapshot::find_pointer_paths(first_snap_opt, first_addr, second_snap_opt, second_addr);
         println!("FINDING POINTER PATHS (OPTIMIZED) TOOK: {:?}", a.elapsed());
 
         // assert_eq!(offsets.len(), offsets2.len());
