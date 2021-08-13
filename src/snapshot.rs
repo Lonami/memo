@@ -1,6 +1,7 @@
 use crate::Process;
 use std::collections::{BinaryHeap, HashSet};
 use std::convert::TryInto;
+use std::mem;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -34,7 +35,7 @@ define_serdes! {
     }
 }
 
-pub fn prepare_optimized_scan(snap: &Snapshot) -> Snapshot {
+pub fn prepare_optimized_scan(snap: &mut Snapshot) {
     let mut block_idx_pointed_from = (0..snap.blocks.len())
         .map(|_| HashSet::new())
         .collect::<Vec<_>>();
@@ -43,10 +44,8 @@ pub fn prepare_optimized_scan(snap: &Snapshot) -> Snapshot {
     // 'static lifetime, because we make sure to join them before.
     let (snap_ref, bipf_tail) = unsafe {
         (
-            std::mem::transmute::<&'_ _, &'static _>(snap),
-            std::mem::transmute::<&'_ mut _, &'static mut [_]>(
-                block_idx_pointed_from.as_mut_slice(),
-            ),
+            mem::transmute::<&'_ _, &'static _>(snap),
+            mem::transmute::<&'_ mut _, &'static mut [_]>(block_idx_pointed_from.as_mut_slice()),
         )
     };
 
@@ -92,7 +91,7 @@ pub fn prepare_optimized_scan(snap: &Snapshot) -> Snapshot {
     }
 
     // Convert set into a sorted vector.
-    let block_idx_pointed_from = block_idx_pointed_from
+    snap.block_idx_pointed_from = block_idx_pointed_from
         .into_iter()
         .map(|set| {
             let mut vec = set.into_iter().collect::<Vec<_>>();
@@ -102,12 +101,6 @@ pub fn prepare_optimized_scan(snap: &Snapshot) -> Snapshot {
             vec
         })
         .collect::<Vec<_>>();
-
-    Snapshot {
-        memory: snap.memory.clone(),
-        blocks: snap.blocks.clone(),
-        block_idx_pointed_from,
-    }
 }
 
 // Returns a vector with the vectors of valid offsets.
