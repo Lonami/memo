@@ -151,17 +151,19 @@ pub fn find_pointer_paths(
 
     good_finds
         .into_iter()
-        .map(|node_idx| {
+        .map(|mut node_idx| {
             let mut addresses = Vec::with_capacity((TOP_DEPTH + 1) as usize);
             // Walk the linked list.
-            let mut node = nodes_walked[node_idx].clone();
-            addresses.push(node.addr);
-
-            // A parent pointing to itself represents the end.
-            // This is similar to trying to `cd ..` when already at `/`.
-            while node.parent != nodes_walked[node.parent].parent {
-                node = nodes_walked[node.parent].clone();
+            loop {
+                let node = &nodes_walked[node_idx];
                 addresses.push(node.addr);
+                // A node whose parent is itself represents the end.
+                // This is similar to trying to `cd ..` when already at `/`.
+                if node_idx == node.parent {
+                    break;
+                } else {
+                    node_idx = node.parent;
+                }
             }
 
             // Now update the list of addresses to turn them into offsets.
