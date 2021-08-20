@@ -117,7 +117,7 @@ fn maybe_do_find_ptr_path(
         .flat_map(|r| r.locations.iter())
         .next()
         .unwrap();
-    let first_snap = snapshot::Snapshot::new(&process, &regions);
+    let mut first_snap = snapshot::Snapshot::new(&process, &regions);
 
     println!("Make the address change (for example, log out and back in again).");
     println!("After that, make sure to find the same value you were looking for before.");
@@ -129,10 +129,12 @@ fn maybe_do_find_ptr_path(
         .flat_map(|r| r.locations.iter())
         .next()
         .unwrap();
-    let second_snap = snapshot::Snapshot::new(&process, &regions);
+    let mut second_snap = snapshot::Snapshot::new(&process, &regions);
 
     println!("Process snapshots taken before and after the memory locations changed.");
     println!("Now looking for pointer paths were the offsets match exactly in both.");
+    snapshot::prepare_optimized_scan(&mut first_snap);
+    snapshot::prepare_optimized_scan(&mut second_snap);
     let offsets = snapshot::find_pointer_paths(
         first_snap.clone(),
         first_addr,
