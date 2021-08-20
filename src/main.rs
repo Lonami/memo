@@ -8,7 +8,6 @@ pub mod ui;
 
 use process::Process;
 use scan::{Scan, Scannable};
-use serdes::SerDes;
 use std::convert::TryInto;
 use std::fmt;
 use winapi::um::winnt;
@@ -29,68 +28,6 @@ impl fmt::Display for ProcessItem {
 }
 
 fn main() {
-    if let Ok(file) = std::fs::File::open("ptrpath.bin") {
-        let PtrPathBackup {
-            mut first_snap,
-            first_addr,
-            mut second_snap,
-            second_addr,
-        } = PtrPathBackup::load(&mut std::io::BufReader::new(file)).unwrap();
-
-        // Manually fix the default block_idx_pointed_from (was saved empty).
-        let block_map = (0..first_snap.blocks.len()).collect::<Vec<_>>();
-        let block_idx_pointed_from = (0..first_snap.blocks.len())
-            .map(|_| block_map.clone())
-            .collect::<Vec<_>>();
-        first_snap.block_idx_pointed_from = block_idx_pointed_from.clone();
-        second_snap.block_idx_pointed_from = block_idx_pointed_from.clone();
-
-        let a = std::time::Instant::now();
-        let offsets =
-            snapshot::find_pointer_paths(first_snap.clone(), first_addr, second_snap.clone(), second_addr);
-        println!(
-            "FINDING POINTER PATHS (UNOPTIMIZED) TOOK: {:?}",
-            a.elapsed()
-        );
-
-        let a = std::time::Instant::now();
-        snapshot::prepare_optimized_scan(&mut first_snap);
-        println!("OPTIMIZING FIRST SNAPSHOT TOOK: {:?}", a.elapsed());
-
-        let a = std::time::Instant::now();
-        snapshot::prepare_optimized_scan(&mut second_snap);
-        println!("OPTIMIZING SECOND SNAPSHOT TOOK: {:?}", a.elapsed());
-
-        let a = std::time::Instant::now();
-        let offsets2 =
-            snapshot::find_pointer_paths(first_snap, first_addr, second_snap, second_addr);
-        println!("FINDING POINTER PATHS (OPTIMIZED) TOOK: {:?}", a.elapsed());
-
-        assert_eq!(offsets.len(), offsets2.len());
-
-        println!("Here are the offsets I found:");
-        let base = 0usize;
-        let name = "PROOCESS.EXE";
-        offsets.iter().enumerate().for_each(|(i, offset_list)| {
-            print!("{}. ", i);
-            for _offset in offset_list.iter() {
-                print!("[");
-            }
-            let mut first = true;
-            for offset in offset_list.iter() {
-                if first {
-                    print!("\"{}\"+{:X}]", name, offset - base);
-                    first = false;
-                } else {
-                    print!(" + {:X}]", offset);
-                }
-            }
-            println!();
-        });
-
-        return;
-    }
-
     let pid = PROGRAM_PID
         .map(|pid| pid.parse::<u32>().unwrap())
         .unwrap_or_else(|| {
@@ -161,16 +98,6 @@ fn repl_find_value(
     last_scan
 }
 
-define_serdes! {
-    #[derive(Debug, PartialEq)]
-    struct PtrPathBackup {
-        first_snap: snapshot::Snapshot,
-        first_addr: usize,
-        second_snap: snapshot::Snapshot,
-        second_addr: usize,
-    }
-}
-
 fn maybe_do_find_ptr_path(
     last_scan: &[scan::Region],
     regions: &[winnt::MEMORY_BASIC_INFORMATION],
@@ -232,20 +159,6 @@ fn maybe_do_find_ptr_path(
         }
         println!();
     });
-
-    PtrPathBackup {
-        first_snap,
-        first_addr,
-        second_snap,
-        second_addr,
-    }
-    .save(&mut std::io::BufWriter::new(
-        std::fs::File::create("ptrpath.bak").unwrap(),
-    ))
-    .unwrap();
-    if true {
-        return true;
-    }
 
     let index = ui::prompt::<usize>("Which one should I use?: ").unwrap();
     let offset_list = &offsets[index];
