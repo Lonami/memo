@@ -6,6 +6,9 @@ use std::convert::TryInto;
 use std::fmt;
 use winapi::um::winnt;
 
+/// How many process identifiers will be enumerated at most.
+const MAX_PIDS: usize = 1024;
+
 /// Environment variable with the process identifier of the process to work with.
 /// If the variable if not set (`set PID=...`), it's asked at runtime.
 static PROGRAM_PID: Option<&str> = option_env!("PID");

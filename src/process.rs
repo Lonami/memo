@@ -1,14 +1,10 @@
-use crate::scan::{Region, Scan, Scannable};
+use crate::module::Module;
 use std::io;
 use std::mem::{self, MaybeUninit};
 use std::ptr::{self, NonNull};
 use winapi::ctypes::c_void;
 use winapi::shared::minwindef::{DWORD, FALSE, HMODULE};
 use winapi::um::winnt;
-use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
-
-/// How many process identifiers will be enumerated at most.
-const MAX_PIDS: usize = 1024;
 
 /// How many ASCII characters to read for a process name at most.
 const MAX_PROC_NAME_LEN: usize = 64;
@@ -16,14 +12,14 @@ const MAX_PROC_NAME_LEN: usize = 64;
 /// A handle to an opened process.
 #[derive(Debug)]
 pub struct Process {
-    pid: u32,
-    handle: NonNull<c_void>,
+    pub(crate) pid: u32,
+    pub(crate) handle: NonNull<c_void>,
 }
 
-/// Enumerate the process identifiers of all programs currently running.
-pub fn enum_proc() -> io::Result<Vec<u32>> {
+/// Enumerate up to `n` Process IDentifiers (PIDs) of all programs currently running.
+pub fn list_processes(n: usize) -> io::Result<Vec<u32>> {
     let mut size = 0;
-    let mut pids = Vec::<DWORD>::with_capacity(MAX_PIDS);
+    let mut pids = Vec::<DWORD>::with_capacity(n);
     // SAFETY: the pointer is valid and the size matches the capacity.
     if unsafe {
         winapi::um::psapi::EnumProcesses(
@@ -43,7 +39,7 @@ pub fn enum_proc() -> io::Result<Vec<u32>> {
 }
 
 impl Process {
-    /// Open a process handle given its process identifier.
+    /// Open a process handle given its Process IDentifier (PID).
     pub fn open(pid: u32) -> io::Result<Self> {
         // SAFETY: the call doesn't have dangerous side-effects
         NonNull::new(unsafe {
@@ -60,13 +56,13 @@ impl Process {
         .ok_or_else(io::Error::last_os_error)
     }
 
-    /// Return the process identifier.
+    /// Return the Process IDentifier.
     pub fn pid(&self) -> u32 {
         self.pid
     }
 
-    /// Return the base name of the first module loaded by this process.
-    pub fn name(&self) -> io::Result<String> {
+    /// Return the first module loaded by this process.
+    pub fn base_module(&self) -> io::Result<Module<'_>> {
         let mut module = MaybeUninit::<HMODULE>::uninit();
         let mut size = 0;
         // SAFETY: the pointer is valid and the size is correct.
@@ -84,27 +80,14 @@ impl Process {
 
         // SAFETY: the call succeeded, so module is initialized.
         let module = unsafe { module.assume_init() };
-
-        let mut buffer = Vec::<u8>::with_capacity(MAX_PROC_NAME_LEN);
-        // SAFETY: the handle, module and buffer are all valid.
-        let length = unsafe {
-            winapi::um::psapi::GetModuleBaseNameA(
-                self.handle.as_ptr(),
-                module,
-                buffer.as_mut_ptr().cast(),
-                buffer.capacity() as u32,
-            )
-        };
-        if length == 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        // SAFETY: the call succeeded and length represents bytes.
-        unsafe { buffer.set_len(length as usize) };
-        Ok(String::from_utf8(buffer).unwrap())
+        Ok(Module {
+            process: self,
+            module,
+        })
     }
 
-    pub fn enum_modules(&self) -> io::Result<Vec<winapi::shared::minwindef::HMODULE>> {
+    /// Enumerate all modules currently loaded by this process.
+    pub fn list_modules(&self) -> io::Result<Vec<Module<'_>>> {
         let mut size = 0;
         // SAFETY: the pointer is valid and the indicated size is 0.
         if unsafe {
@@ -138,57 +121,40 @@ impl Process {
             modules.set_len(size as usize / mem::size_of::<HMODULE>());
         }
 
-        Ok(modules)
-    }
-
-    pub fn memory_regions(&self) -> Vec<MEMORY_BASIC_INFORMATION> {
-        let mut base = 0;
-        let mut regions = Vec::new();
-        let mut info = MaybeUninit::uninit();
-
-        loop {
-            // SAFETY: the info structure points to valid memory.
-            let written = unsafe {
-                winapi::um::memoryapi::VirtualQueryEx(
-                    self.handle.as_ptr(),
-                    base as *const _,
-                    info.as_mut_ptr(),
-                    mem::size_of::<MEMORY_BASIC_INFORMATION>(),
-                )
-            };
-            if written == 0 {
-                break regions;
-            }
-            // SAFETY: a non-zero amount was written to the structure
-            let info = unsafe { info.assume_init() };
-            base = info.BaseAddress as usize + info.RegionSize;
-            regions.push(info);
-        }
-    }
-
-    /// Returns the memory regions which fall within the location of one of the process' modules.
-    /// This means addresses within these regions are "stable" and are unlikely to change when
-    /// the program reloads. The returned list is sorted by module order, not region position.
-    pub fn base_memory_regions(&self) -> io::Result<Vec<MEMORY_BASIC_INFORMATION>> {
-        let modules = self.enum_modules()?;
-        let regions = self.memory_regions();
         Ok(modules
-            .iter()
-            .flat_map(|module| {
-                regions
-                    .iter()
-                    .find(|region| {
-                        let base = region.AllocationBase as usize;
-                        let addr = *module as usize;
-                        base == addr
-                    })
-                    .copied()
+            .into_iter()
+            .map(|module| Module {
+                process: self,
+                module,
             })
             .collect())
     }
 
-    pub fn read_memory(&self, addr: usize, n: usize) -> io::Result<Vec<u8>> {
-        let mut buffer = Vec::<u8>::with_capacity(n);
+    /// Fetch the base name of the first module loaded by this process.
+    ///
+    /// This is equivalent to using [`Self::base_module`] and retrieving its name.
+    pub fn name(&self) -> io::Result<String> {
+        self.base_module()?.truncated_name(MAX_PROC_NAME_LEN)
+    }
+
+    /// Return a iterator over all the memory pages allocated by the process.
+    ///
+    /// When a [`crate::Region::addr`] is equal to a [`crate::Module::addr`], you can consider
+    /// every address within that page "stable" (i.e. it will always be the same, regardless of
+    /// any dynamic allocation the process may perform).
+    pub fn iter_memory_pages(&self) -> crate::region::Iter<'_> {
+        crate::region::Iter {
+            process: self,
+            base: 0,
+        }
+    }
+
+    /// Read the process' memory at the given address `addr` and copy it into the local buffer
+    /// `buffer`. The address belongs to the address space of the process, not an address of the
+    /// current process.
+    ///
+    /// The amount of bytes copied is returned, which may be less than `buffer.len()`.
+    pub fn read_memory(&self, addr: usize, buffer: &mut [u8]) -> io::Result<usize> {
         let mut read = 0;
 
         // SAFETY: the buffer points to valid memory, and the buffer size is correctly set.
@@ -197,20 +163,31 @@ impl Process {
                 self.handle.as_ptr(),
                 addr as *const _,
                 buffer.as_mut_ptr().cast(),
-                buffer.capacity(),
+                buffer.len(),
                 &mut read,
             )
         } == FALSE
         {
             Err(io::Error::last_os_error())
         } else {
-            // SAFETY: the call succeeded and `read` contains the amount of bytes written.
-            unsafe { buffer.set_len(read as usize) };
-            Ok(buffer)
+            Ok(read as usize)
         }
     }
 
-    pub fn write_memory(&self, addr: usize, value: &[u8]) -> io::Result<usize> {
+    /// Like [`Self::read_memory`] but retries until the buffer is filled.
+    pub fn read_memory_exact(&self, mut addr: usize, mut buffer: &mut [u8]) -> io::Result<()> {
+        while !buffer.is_empty() {
+            let read = self.read_memory(addr, buffer)?;
+            buffer = &mut buffer[read..];
+            addr += read;
+        }
+        Ok(())
+    }
+
+    /// Copy memory from the local buffer into the process' memory at the given address `addr`.
+    ///
+    /// The amount of bytes written is returned, which may be less than `buffer.len()`.
+    pub fn write_memory(&self, addr: usize, buffer: &[u8]) -> io::Result<usize> {
         let mut written = 0;
 
         // SAFETY: the input value buffer points to valid memory.
@@ -218,8 +195,8 @@ impl Process {
             winapi::um::memoryapi::WriteProcessMemory(
                 self.handle.as_ptr(),
                 addr as *mut _,
-                value.as_ptr().cast(),
-                value.len(),
+                buffer.as_ptr().cast(),
+                buffer.len(),
                 &mut written,
             )
         } == FALSE
@@ -230,6 +207,17 @@ impl Process {
         }
     }
 
+    /// Like [`Self::write_memory`] but retries until the entire buffer is written.
+    pub fn write_memory_all(&self, mut addr: usize, mut buffer: &[u8]) -> io::Result<()> {
+        while !buffer.is_empty() {
+            let written = self.write_memory(addr, buffer)?;
+            buffer = &buffer[written..];
+            addr += written;
+        }
+        Ok(())
+    }
+
+    /*
     pub fn scan_regions<T: Scannable>(
         &self,
         regions: &[MEMORY_BASIC_INFORMATION],
@@ -326,6 +314,7 @@ impl Process {
             "no matching instruction found",
         ))
     }
+    */
 
     /// Allocate `size` bytes in the process' memory, as close as possible to `addr`.
     ///
@@ -371,7 +360,7 @@ impl Process {
 
 impl Drop for Process {
     fn drop(&mut self) {
-        // SAFETY: the handle is valid and non-null
+        // SAFETY: the handle is valid and non-null.
         let ret = unsafe { winapi::um::handleapi::CloseHandle(self.handle.as_mut()) };
         assert_ne!(ret, FALSE);
     }
