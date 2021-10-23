@@ -16,15 +16,15 @@ macro_rules! define_serdes {
             $($vis $field: $ty,)*
         }
 
-        impl crate::serdes::SerDes for $name {
+        impl crate::scanner::serdes::SerDes for $name {
             fn load<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
                 Ok(Self {
-                    $($field: <$ty as crate::serdes::SerDes>::load(reader)?,)*
+                    $($field: <$ty as crate::scanner::serdes::SerDes>::load(reader)?,)*
                 })
             }
 
             fn save<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
-                $(<$ty as crate::serdes::SerDes>::save(&self.$field, writer)?;)*
+                $(<$ty as crate::scanner::serdes::SerDes>::save(&self.$field, writer)?;)*
                 Ok(())
             }
         }

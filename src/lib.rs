@@ -1,4 +1,5 @@
 pub mod ffi;
+pub mod scanner;
 
 pub use ffi::debug::{debug_process, DebugToken};
 pub use ffi::module::Module;
