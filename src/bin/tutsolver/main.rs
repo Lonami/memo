@@ -1,13 +1,7 @@
-pub mod debug;
-pub mod process;
-pub mod scan;
-pub mod serdes;
-pub mod snapshot;
-pub mod thread;
 pub mod ui;
 
-use process::Process;
-use scan::{Scan, Scannable};
+use memo::scan::{Scan, Scannable};
+use memo::{process, scan, snapshot, Process};
 use std::convert::TryInto;
 use std::fmt;
 use winapi::um::winnt;
