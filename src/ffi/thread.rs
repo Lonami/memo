@@ -3,6 +3,23 @@ use std::mem::{self, MaybeUninit};
 use std::ptr::NonNull;
 use winapi::ctypes::c_void;
 use winapi::shared::minwindef::{DWORD, FALSE};
+use winapi::um::tlhelp32::THREADENTRY32;
+
+/// A thread entry.
+#[derive(Debug)]
+pub struct Entry {
+    /// The Thread IDentifier (TID) of this entry.
+    pub tid: u32,
+    /// The Process IDentifier (PID) of the process owning this thread.
+    pub owner_pid: Option<u32>,
+    /// The kernel base priority level assigned to the thread.
+    pub base_priority: Option<i32>,
+}
+
+pub struct Iter {
+    handle: winapi::um::winnt::HANDLE,
+    current: Option<THREADENTRY32>,
+}
 
 /// A handle to an opened thread.
 #[derive(Debug)]
@@ -51,62 +68,85 @@ pub struct Breakpoint<'a> {
     clear_mask: u64,
 }
 
-#[derive(Debug)]
-pub struct Toolhelp {
-    handle: winapi::um::winnt::HANDLE,
+impl Iterator for Iter {
+    type Item = Entry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let entry = if let Some(mut entry) = self.current.take() {
+            entry.dwSize = mem::size_of::<THREADENTRY32>() as u32;
+
+            // SAFETY: we have a valid handle, and point to memory we own with the right size.
+            if unsafe { winapi::um::tlhelp32::Thread32Next(self.handle, &mut entry) } == FALSE {
+                return None;
+            }
+            entry
+        } else {
+            let mut entry = THREADENTRY32 {
+                dwSize: mem::size_of::<THREADENTRY32>() as u32,
+                cntUsage: 0,
+                th32ThreadID: 0,
+                th32OwnerProcessID: 0,
+                tpBasePri: 0,
+                tpDeltaPri: 0,
+                dwFlags: 0,
+            };
+
+            // SAFETY: we have a valid handle, and point to memory we own with the right size.
+            if unsafe { winapi::um::tlhelp32::Thread32First(self.handle, &mut entry) } == FALSE {
+                return None;
+            }
+            entry
+        };
+
+        let result = if entry.dwSize > 4 * mem::size_of::<DWORD>() as u32 {
+            Entry {
+                tid: entry.th32ThreadID,
+                owner_pid: Some(entry.th32OwnerProcessID),
+                base_priority: Some(entry.tpBasePri),
+            }
+        } else if entry.dwSize > 3 * mem::size_of::<DWORD>() as u32 {
+            Entry {
+                tid: entry.th32ThreadID,
+                owner_pid: Some(entry.th32OwnerProcessID),
+                base_priority: None,
+            }
+        } else if entry.dwSize > 2 * mem::size_of::<DWORD>() as u32 {
+            Entry {
+                tid: entry.th32ThreadID,
+                owner_pid: None,
+                base_priority: None,
+            }
+        } else {
+            return None;
+        };
+
+        self.current = Some(entry);
+        Some(result)
+    }
 }
 
-impl Drop for Toolhelp {
+impl Drop for Iter {
     fn drop(&mut self) {
-        // SAFETY: the handle is valid and not invalid
+        // SAFETY: the handle is valid.
         let ret = unsafe { winapi::um::handleapi::CloseHandle(self.handle) };
         assert_ne!(ret, FALSE);
     }
 }
 
-/// Enumerate the thread identifiers owned by the specified process.
-pub fn enum_threads(pid: u32) -> io::Result<Vec<u32>> {
-    const ENTRY_SIZE: u32 = mem::size_of::<winapi::um::tlhelp32::THREADENTRY32>() as u32;
-
-    // size_of(dwSize + cntUsage + th32ThreadID + th32OwnerProcessID)
-    const NEEDED_ENTRY_SIZE: u32 = 4 * mem::size_of::<DWORD>() as u32;
-
+/// Enumerate all threads currently alive in the entire system.
+pub fn iter_threads() -> io::Result<Iter> {
     // SAFETY: it is always safe to attempt to call this function.
     let handle = unsafe {
         winapi::um::tlhelp32::CreateToolhelp32Snapshot(winapi::um::tlhelp32::TH32CS_SNAPTHREAD, 0)
     };
     if handle == winapi::um::handleapi::INVALID_HANDLE_VALUE {
-        return Err(io::Error::last_os_error());
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(Iter {
+            handle,
+            current: None,
+        })
     }
-    let toolhelp = Toolhelp { handle };
-
-    let mut result = Vec::new();
-    let mut entry = winapi::um::tlhelp32::THREADENTRY32 {
-        dwSize: ENTRY_SIZE,
-        cntUsage: 0,
-        th32ThreadID: 0,
-        th32OwnerProcessID: 0,
-        tpBasePri: 0,
-        tpDeltaPri: 0,
-        dwFlags: 0,
-    };
-
-    // SAFETY: we have a valid handle, and point to memory we own with the right size.
-    if unsafe { winapi::um::tlhelp32::Thread32First(toolhelp.handle, &mut entry) } != FALSE {
-        loop {
-            if entry.dwSize >= NEEDED_ENTRY_SIZE && entry.th32OwnerProcessID == pid {
-                result.push(entry.th32ThreadID);
-            }
-
-            entry.dwSize = ENTRY_SIZE;
-            // SAFETY: we have a valid handle, and point to memory we own with the right size.
-            if unsafe { winapi::um::tlhelp32::Thread32Next(toolhelp.handle, &mut entry) } == FALSE {
-                break;
-            }
-        }
-    }
-
-    Ok(result)
 }
 
 impl Thread {
