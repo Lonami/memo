@@ -1,4 +1,5 @@
-use crate::module::Module;
+use crate::Module;
+
 use std::io;
 use std::mem::{self, MaybeUninit};
 use std::ptr::{self, NonNull};
@@ -142,8 +143,8 @@ impl Process {
     /// When a [`crate::Region::addr`] is equal to a [`crate::Module::addr`], you can consider
     /// every address within that page "stable" (i.e. it will always be the same, regardless of
     /// any dynamic allocation the process may perform).
-    pub fn iter_memory_pages(&self) -> crate::region::Iter<'_> {
-        crate::region::Iter {
+    pub fn iter_memory_pages(&self) -> super::region::Iter<'_> {
+        super::region::Iter {
             process: self,
             base: 0,
         }

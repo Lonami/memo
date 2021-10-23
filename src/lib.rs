@@ -1,16 +1,7 @@
-pub mod debug;
-pub mod module;
-pub mod process;
-pub mod region;
-//pub mod scan;
-pub mod serdes;
-//pub mod snapshot;
-pub mod thread;
+pub mod ffi;
 
-pub use module::Module;
-pub use process::Process;
-pub use region::Region;
-//pub use scan::{Scan, Scannable};
-pub use std::convert::TryInto;
-pub use std::fmt;
-pub use winapi::um::winnt;
+pub use ffi::debug::{debug as debug_process, DebugToken};
+pub use ffi::module::Module;
+pub use ffi::process::{list_processes, Process};
+pub use ffi::region::Region;
+pub use ffi::thread::{enum_threads, Breakpoint, Thread};
