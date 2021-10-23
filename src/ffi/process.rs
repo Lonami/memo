@@ -131,6 +131,26 @@ impl Process {
             .collect())
     }
 
+    /// Begin debugging this process.
+    ///
+    /// This is equivalent to using [`crate::debug_process`] with the current PID.
+    pub fn begin_debugging(&self) -> io::Result<crate::DebugToken> {
+        crate::debug_process(self.pid)
+    }
+
+    /// Enumerate all thread identifiers where the owning process is this one.
+    ///
+    /// This is equivalent to using [`crate::iter_threads`] and filtering by the owning PID.
+    pub fn list_threads(&self) -> io::Result<Vec<u32>> {
+        Ok(crate::iter_threads()?
+            .into_iter()
+            .flat_map(|entry| match entry.owner_pid {
+                Some(pid) if pid == self.pid => Some(entry.tid),
+                _ => None,
+            })
+            .collect())
+    }
+
     /// Fetch the base name of the first module loaded by this process.
     ///
     /// This is equivalent to using [`Self::base_module`] and retrieving its name.
