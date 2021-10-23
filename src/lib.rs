@@ -1,6 +1,6 @@
 pub mod ffi;
 
-pub use ffi::debug::{debug as debug_process, DebugToken};
+pub use ffi::debug::{debug_process, DebugToken};
 pub use ffi::module::Module;
 pub use ffi::process::{list_processes, Process};
 pub use ffi::region::Region;

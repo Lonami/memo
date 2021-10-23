@@ -4,13 +4,16 @@ use std::mem::MaybeUninit;
 use std::time::Duration;
 use winapi::shared::minwindef::FALSE;
 
+/// Proof that the current process is currently debugging another process.
+///
+/// When dropped, the current process stops being a debugger of the debuggee.
 pub struct DebugToken {
     pid: u32,
 }
 
-/// Attach the current process (the debugger) to the process with the corresponding identifier
-/// (the debuggee).
-pub fn debug(pid: u32) -> io::Result<DebugToken> {
+/// Attach the current process (the debugger) to the process with the corresponding Process
+/// IDentifier (the PID of the debuggee).
+pub fn debug_process(pid: u32) -> io::Result<DebugToken> {
     // SAFETY: the call doesn't have dangerous side-effects.
     if unsafe { winapi::um::debugapi::DebugActiveProcess(pid) } == FALSE {
         return Err(io::Error::last_os_error());
@@ -26,7 +29,17 @@ pub fn debug(pid: u32) -> io::Result<DebugToken> {
 }
 
 impl DebugToken {
-    pub fn wait_event(
+    /// Return the Process IDentifier of the debuggee represented by this token.
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+
+    /// Wait for a debugging event to occur within the specified duration.
+    ///
+    /// The debuggee is paused until execution is resumed through [`Self::cont`].
+    ///
+    /// The raw debug event structure is returned.
+    pub fn wait_event_raw(
         &self,
         timeout: Option<Duration>,
     ) -> io::Result<winapi::um::minwinbase::DEBUG_EVENT> {
@@ -46,6 +59,10 @@ impl DebugToken {
         }
     }
 
+    /// Continue the execution of the debuggee.
+    ///
+    /// The value of `handled` should be `true` when the exception was appropriately handled,
+    /// or `false` for the exception to be dispatched to a different handler.
     pub fn cont(
         &self,
         event: winapi::um::minwinbase::DEBUG_EVENT,
