@@ -9,30 +9,26 @@ use std::thread;
 
 const MAX_OFFSET: usize = 0x400;
 
-define_serdes! {
-    #[derive(Clone, Debug, PartialEq)]
-    pub struct Block {
-        pub real_addr: usize,
-        pub mem_offset: usize,
-        pub len: usize,
-        pub base: bool,
-    }
+#[derive(Clone, Debug, PartialEq)]
+pub struct Block {
+    pub real_addr: usize,
+    pub mem_offset: usize,
+    pub len: usize,
+    pub base: bool,
 }
 
-define_serdes! {
-    #[derive(Clone, Debug, Default, PartialEq)]
-    pub struct Snapshot {
-        pub memory: Vec<u8>,
-        pub blocks: Vec<Block>,
-        // Has the same length as `blocks`. A given index represents that the
-        // block at this index (very likely) is pointed-to from pointer-values
-        // in the blocks in the child indices.
-        //
-        // For example, if `map[4] = [1, 4, 7]`, then all of `blocks[1]`,
-        // `blocks[4]` and `blocks[7]` have aligned pointer-values in their
-        // corresponding memory that point into `blocks[4]`.
-        pub block_idx_pointed_from: Vec<Vec<usize>>,
-    }
+#[derive(Clone, Debug, PartialEq)]
+pub struct Snapshot {
+    pub memory: Vec<u8>,
+    pub blocks: Vec<Block>,
+    // Has the same length as `blocks`. A given index represents that the
+    // block at this index (very likely) is pointed-to from pointer-values
+    // in the blocks in the child indices.
+    //
+    // For example, if `map[4] = [1, 4, 7]`, then all of `blocks[1]`,
+    // `blocks[4]` and `blocks[7]` have aligned pointer-values in their
+    // corresponding memory that point into `blocks[4]`.
+    pub block_idx_pointed_from: Vec<Vec<usize>>,
 }
 
 #[derive(Debug)]
