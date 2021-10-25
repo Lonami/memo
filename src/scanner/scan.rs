@@ -79,9 +79,9 @@ where
     F: FnMut(&[u8]) -> bool,
 {
     /// The size of the chunks that will be checked for a match.
-    size: usize,
+    pub size: usize,
     /// The stride of the scan (number of bytes from the start of one chunk to the next).
-    stride: usize,
+    pub stride: usize,
     /// The predicate that will be used to determine whether a chunk should be kept or discarded.
     ///
     /// The predicate can range from something really trivial (e.g. keep all chunks, or only those
@@ -89,8 +89,8 @@ where
     /// as integers, fall within a specific range).
     ///
     /// If no guess can be made for the initial value, it is better to use
-    /// [`Scan::with_value_size`], which will be far more space-efficient.
-    predicate: F,
+    /// [`LiveScan::with_value_size`], which will be far more space-efficient.
+    pub predicate: F,
 }
 
 /// A live scan on which re-scans can be executed.
@@ -207,7 +207,7 @@ where
     /// Panics if either [`Self::size`] or [`Self::stride`] are zero.
     ///
     /// This method should be used when certain properties are known about a value, so that
-    /// the number of stored locations is reduced when compared to [`Self::with_value_size`].
+    /// the number of stored locations is reduced when compared to [`LiveScan::with_value_size`].
     pub fn run_on(&mut self, memory: Vec<u8>) -> LiveScan {
         assert_ne!(self.size, 0);
         assert_ne!(self.stride, 0);

@@ -1,4 +1,4 @@
-use crate::Snapshot;
+use super::Snapshot;
 
 use std::collections::BinaryHeap;
 use std::convert::TryInto;
@@ -8,9 +8,25 @@ use std::thread;
 
 #[derive(Debug)]
 pub struct PointerPathFinder {
+    /// Snapshot A taken from a process at some point in time.
+    ///
+    /// It is recommended that the snapshot was taken at a distant time from snapshot B,
+    /// when the memory and [`Self::addr_a`] has shuffled enough in memory, or the process
+    /// will be terribly slow.
     pub snap_a: Snapshot,
+    /// The address from snapshot A you want to find pointer paths for.
+    ///
+    /// The value behind this address should be the same as [`Self::addr_b`].
     pub addr_a: usize,
+    /// Snapshot B taken from a process at some point in time.
+    ///
+    /// It is recommended that the snapshot was taken at a distant time from snapshot A,
+    /// when the memory and [`Self::addr_b`] has shuffled enough in memory, or the process
+    /// will be terribly slow.
     pub snap_b: Snapshot,
+    /// The address from snapshot B you want to find pointer paths for.
+    ///
+    /// The value behind this address should be the same as [`Self::addr_a`].
     pub addr_b: usize,
     /// The maximum offset value allowed in a path.
     pub max_offset: usize,

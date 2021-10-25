@@ -1,4 +1,4 @@
-use crate::Module;
+use super::Module;
 
 use std::io;
 use std::mem::{self, MaybeUninit};
@@ -134,7 +134,7 @@ impl Process {
     /// Begin debugging this process.
     ///
     /// This is equivalent to using [`crate::debug_process`] with the current PID.
-    pub fn begin_debugging(&self) -> io::Result<crate::DebugToken> {
+    pub fn begin_debugging(&self) -> io::Result<super::DebugToken> {
         crate::debug_process(self.pid)
     }
 
@@ -160,9 +160,9 @@ impl Process {
 
     /// Return a iterator over all the memory pages allocated by the process.
     ///
-    /// When a [`crate::Region::addr`] is equal to a [`crate::Module::addr`], you can consider
-    /// every address within that page "stable" (i.e. it will always be the same, regardless of
-    /// any dynamic allocation the process may perform).
+    /// When a [`crate::ffi::Region::addr`] is equal to a [`crate::ffi::Module::addr`], you can
+    /// consider every address within that page "stable" (i.e. it will always be the same,
+    /// regardless of any dynamic allocation the process may perform).
     pub fn iter_memory_pages(&self) -> super::region::Iter<'_> {
         super::region::Iter {
             process: self,

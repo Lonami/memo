@@ -1,4 +1,4 @@
-use crate::{Process, Region};
+use crate::ffi::{Process, Region};
 
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
