@@ -1,5 +1,5 @@
 use crate::{Process, Region};
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::convert::TryInto;
 use std::io;
 use std::num::NonZeroUsize;
@@ -17,18 +17,19 @@ pub struct Block {
     pub base: bool,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snapshot {
     pub memory: Vec<u8>,
     pub blocks: Vec<Block>,
-    // Has the same length as `blocks`. A given index represents that the
-    // block at this index (very likely) is pointed-to from pointer-values
-    // in the blocks in the child indices.
+    // A given key represents that the block at this key (very likely) is pointed-to from
+    // pointer-values in the blocks in the child indices.
     //
-    // For example, if `map[4] = [1, 4, 7]`, then all of `blocks[1]`,
-    // `blocks[4]` and `blocks[7]` have aligned pointer-values in their
-    // corresponding memory that point into `blocks[4]`.
-    pub block_idx_pointed_from: Vec<Vec<usize>>,
+    // For example, if `map[4] = [1, 4, 7]`, then all of `blocks[1]`, `blocks[4]` and
+    // `blocks[7]` have aligned pointer-values in their corresponding memory that point into
+    // `blocks[4]`.
+    //
+    // If an index is not present here as a key, it is considered to not be interesting.
+    pub block_idx_pointed_from: HashMap<usize, Vec<usize>>,
 }
 
 #[derive(Debug)]
@@ -71,8 +72,8 @@ where
     // block index).
     let block_map = (0..blocks.len()).collect::<Vec<_>>();
     let block_idx_pointed_from = (0..blocks.len())
-        .map(|_| block_map.clone())
-        .collect::<Vec<_>>();
+        .map(|i| (i, block_map.clone()))
+        .collect::<HashMap<_, _>>();
 
     Ok(Snapshot {
         memory,
@@ -87,9 +88,21 @@ impl Snapshot {
     /// After the optimizer runs, searching paths within this snapshot will be considerably faster.
     ///
     /// The optimizer can be cloned and executed from multiple threads at the same time.
-    pub fn into_optimizer(self) -> OptimizerWorker {
+    ///
+    /// Only blocks for which the predicate returns `true` will be kept. The other blocks will be
+    /// dropped. Memory can later be reclaimed with [`Self::compact`].
+    pub fn into_optimizer<F>(self, mut predicate: F) -> OptimizerWorker
+    where
+        F: FnMut(&Block) -> bool,
+    {
         OptimizerWorker {
-            pending: Mutex::new((0..self.blocks.len()).collect::<Vec<_>>()),
+            pending: Mutex::new(
+                self.blocks
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, block)| predicate(block).then(|| i))
+                    .collect::<Vec<_>>(),
+            ),
             done: Mutex::new(Vec::new()),
             snapshot: self,
         }
@@ -98,8 +111,14 @@ impl Snapshot {
     /// Return an optimized version of self.
     ///
     /// `extra_threads` will be spawned to help speed up the optimization process.
-    pub fn optimized_with_threads(self, extra_threads: usize) -> Self {
-        let worker = Arc::new(self.into_optimizer());
+    ///
+    /// Only blocks for which the predicate returns `true` will be kept. The other blocks will be
+    /// dropped. Memory can later be reclaimed with [`Self::compact`].
+    pub fn optimized_with_threads<F>(self, extra_threads: usize, predicate: F) -> Self
+    where
+        F: FnMut(&Block) -> bool,
+    {
+        let worker = Arc::new(self.into_optimizer(predicate));
         let threads = (0..extra_threads)
             .map(|_| {
                 let dupe_worker = Arc::clone(&worker);
@@ -136,9 +155,7 @@ impl OptimizerWorker {
         }
     }
 
-    /// Attempts to finish the optimization job.
-    ///
-    /// Panics if there are other workers still alive (if you spawned threads, join them first).
+    /// Finish the optimization job.
     pub fn finish(self) -> Snapshot {
         let mut snap = self.snapshot;
         let mut done = self.done.into_inner().unwrap();
@@ -146,14 +163,14 @@ impl OptimizerWorker {
             done.sort_by_key(|(idx, _set)| *idx);
             snap.block_idx_pointed_from = done
                 .into_iter()
-                .map(|(_idx, set)| {
+                .map(|(idx, set)| {
                     let mut vec = set.into_iter().collect::<Vec<_>>();
                     // TODO would it help to sort by "closest block" first?
                     // and stop scanning after a match in any block is found?
                     vec.sort();
-                    vec
+                    (idx, vec)
                 })
-                .collect::<Vec<_>>();
+                .collect::<HashMap<_, _>>();
         }
         snap
     }
@@ -272,10 +289,16 @@ impl Snapshot {
         }
     }
 
-    // Iterate over (memory address, pointer value at said address).
-    pub fn iter_addr(&self, from_addr: usize, base: bool) -> AddrIter {
+    /// Iterate over `(memory address, pointer value at said address)`.
+    ///
+    /// Will not yield results if the address belongs to a block which was optimized away.
+    pub fn iter_addr(&self, from_addr: usize, base: bool) -> AddrIter<'_> {
         let block_idx = self.get_block_idx(from_addr);
-        let block_map = self.block_idx_pointed_from[block_idx].as_slice();
+        let block_map = match self.block_idx_pointed_from.get(&block_idx) {
+            Some(map) => map.as_slice(),
+            None => &[],
+        };
+
         let block = block_map.get(0).map(|i| &self.blocks[*i]);
         AddrIter {
             block,
