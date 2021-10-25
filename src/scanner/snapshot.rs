@@ -71,9 +71,7 @@ where
     // can point to any other block (such `block_map` is cloned for every
     // block index).
     let block_map = (0..blocks.len()).collect::<Vec<_>>();
-    let block_idx_pointed_from = (0..blocks.len())
-        .map(|i| (i, block_map.clone()))
-        .collect::<HashMap<_, _>>();
+    let block_idx_pointed_from = (0..blocks.len()).map(|i| (i, block_map.clone())).collect();
 
     Ok(Snapshot {
         memory,
@@ -130,6 +128,41 @@ impl Snapshot {
         threads.into_iter().for_each(|t| t.join().unwrap());
         Arc::try_unwrap(worker).unwrap().snapshot
     }
+
+    /// Compact the memory used after an optimization.
+    ///
+    /// This is not done by default as it may involve large allocations to move data around.
+    pub fn compact(&mut self) {
+        let new_blocks = self
+            .blocks
+            .iter()
+            .cloned()
+            .enumerate()
+            .filter_map(|(i, block)| self.block_idx_pointed_from.contains_key(&i).then(|| block))
+            .collect::<Vec<_>>();
+
+        let mut new_memory = Vec::with_capacity(new_blocks.iter().map(|b| b.len).sum());
+        let mut mem_offset = 0;
+        let mut idx_map = HashMap::with_capacity(new_blocks.len());
+
+        for (i, block) in self.blocks.iter().enumerate() {
+            if self.block_idx_pointed_from.contains_key(&i) {
+                new_memory.extend_from_slice(&self.memory[mem_offset..mem_offset + block.len]);
+                idx_map.insert(i, idx_map.len());
+            }
+            mem_offset += block.len;
+        }
+
+        let new_block_idx_pointed_from = self
+            .block_idx_pointed_from
+            .iter()
+            .map(|(k, vv)| (idx_map[k], vv.iter().map(|v| idx_map[v]).collect()))
+            .collect();
+
+        self.memory = new_memory;
+        self.blocks = new_blocks;
+        self.block_idx_pointed_from = new_block_idx_pointed_from;
+    }
 }
 
 impl OptimizerWorker {
@@ -158,9 +191,8 @@ impl OptimizerWorker {
     /// Finish the optimization job.
     pub fn finish(self) -> Snapshot {
         let mut snap = self.snapshot;
-        let mut done = self.done.into_inner().unwrap();
+        let done = self.done.into_inner().unwrap();
         if !done.is_empty() {
-            done.sort_by_key(|(idx, _set)| *idx);
             snap.block_idx_pointed_from = done
                 .into_iter()
                 .map(|(idx, set)| {
@@ -170,7 +202,7 @@ impl OptimizerWorker {
                     vec.sort();
                     (idx, vec)
                 })
-                .collect::<HashMap<_, _>>();
+                .collect();
         }
         snap
     }
