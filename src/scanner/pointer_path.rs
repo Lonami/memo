@@ -6,100 +6,16 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
-const MAX_OFFSET: usize = 0x400;
-
-// Returns a vector with the vectors of valid offsets.
-pub fn find_pointer_paths(
-    first_snap: Snapshot,
-    first_addr: usize,
-    second_snap: Snapshot,
-    second_addr: usize,
-) -> Vec<Vec<usize>> {
-    const TOP_DEPTH: u8 = 7;
-
-    let qpf = Arc::new(
-        QueuePathFinderBuilder {
-            first_snap,
-            first_addr,
-            second_snap,
-            second_addr,
-            depth: TOP_DEPTH,
-        }
-        .finish(),
-    );
-
-    let threads = [
-        thread::spawn({
-            let qpf = Arc::clone(&qpf);
-            || run_find_pointer_paths(qpf)
-        }),
-        thread::spawn({
-            let qpf = Arc::clone(&qpf);
-            || run_find_pointer_paths(qpf)
-        }),
-        thread::spawn({
-            let qpf = Arc::clone(&qpf);
-            || run_find_pointer_paths(qpf)
-        }),
-    ];
-
-    run_find_pointer_paths(Arc::clone(&qpf));
-    for thread in threads {
-        thread.join().unwrap();
-    }
-
-    let qpf = Arc::try_unwrap(qpf).unwrap();
-
-    let second_snap = qpf.second_snap;
-    let good_finds = qpf.good_finds.into_inner().unwrap();
-    let nodes_walked = qpf.nodes_walked.into_inner().unwrap();
-
-    good_finds
-        .into_iter()
-        .map(|mut node_idx| {
-            let mut addresses = Vec::with_capacity((TOP_DEPTH + 1) as usize);
-            // Walk the linked list.
-            loop {
-                let node = &nodes_walked[node_idx];
-                addresses.push(node.addr);
-                // A node whose parent is itself represents the end.
-                // This is similar to trying to `cd ..` when already at `/`.
-                if node_idx == node.parent {
-                    break;
-                } else {
-                    node_idx = node.parent;
-                }
-            }
-
-            // Now update the list of addresses to turn them into offsets.
-            let mut offsets = addresses;
-            for i in (1..offsets.len()).rev() {
-                let ptr_value = usize::from_ne_bytes(
-                    second_snap
-                        .read_memory(offsets[i - 1], std::mem::size_of::<usize>())
-                        .unwrap()
-                        .try_into()
-                        .unwrap(),
-                );
-                offsets[i] -= ptr_value;
-            }
-
-            /*
-            The reverse operation (in pseudo-code) would be:
-                base = base addr
-                for offset in offsets[..-1] {
-                    base = [base + offset]
-                }
-                value = [base + offsets[-1]]
-            */
-
-            offsets
-        })
-        .collect()
-}
-
-fn run_find_pointer_paths(qpf: Arc<QueuePathFinder>) {
-    while qpf.step() {}
+#[derive(Debug)]
+pub struct PointerPathFinder {
+    pub snap_a: Snapshot,
+    pub addr_a: usize,
+    pub snap_b: Snapshot,
+    pub addr_b: usize,
+    /// The maximum offset value allowed in a path.
+    pub max_offset: usize,
+    /// The maximum path length.
+    pub max_length: u8,
 }
 
 #[derive(Clone, Debug)]
@@ -116,8 +32,12 @@ struct FutureNode {
     second_addr: usize,
 }
 
+/// A "path finder worker", implemented based on a queue.
+///
+/// You can obtain an instance of this structure through [`PointerPathFinder::init`],
+/// and are free to `Arc`-wrap it in order to perform concurrent work (recommended).
 #[derive(Debug)]
-struct QueuePathFinder {
+pub struct QueuePathFinder {
     first_snap: Snapshot,
     second_snap: Snapshot,
     /// Indices of `nodes_walked` which are "good" (i.e. have reached a base address).
@@ -131,43 +51,67 @@ struct QueuePathFinder {
     /// How many threads are working right now.
     /// Once there is no work and nobody is working, exit, as there won't ever be more work.
     working_now: AtomicU8,
-}
-
-struct QueuePathFinderBuilder {
-    first_snap: Snapshot,
+    /// How far off a pointer-value can be from the address being searched before not being valid.
+    /// Essentially, the maximum delta allowed between an address and scanned pointer-values.
+    max_offset: usize,
+    /// How long can a path be.
+    max_depth: u8,
+    /// Stored in order to reconstruct [`PointerPathFinder::addr_a`] even if no paths are found.
     first_addr: usize,
-    second_snap: Snapshot,
-    second_addr: usize,
-    depth: u8,
 }
 
-impl QueuePathFinderBuilder {
-    pub fn finish(self) -> QueuePathFinder {
+impl PointerPathFinder {
+    /// Initialize a worker structure which can carry the path finding process.
+    pub fn init(self) -> QueuePathFinder {
         QueuePathFinder {
-            first_snap: self.first_snap,
-            second_snap: self.second_snap,
+            first_snap: self.snap_a,
+            second_snap: self.snap_b,
             good_finds: Mutex::new(Vec::new()),
             nodes_walked: Mutex::new(vec![CandidateNode {
                 parent: 0,
-                addr: self.second_addr,
+                addr: self.addr_b,
             }]),
             new_work: {
                 let mut new_work = BinaryHeap::new();
                 new_work.push(FutureNode {
                     node_idx: 0,
-                    first_addr: self.first_addr,
-                    second_addr: self.second_addr,
-                    depth: self.depth,
+                    first_addr: self.addr_a,
+                    second_addr: self.addr_b,
+                    depth: self.max_length,
                 });
                 Mutex::new(new_work)
             },
             work_cvar: Condvar::new(),
             working_now: AtomicU8::new(0),
+            max_offset: self.max_offset,
+            max_depth: self.max_length,
+            first_addr: self.addr_a,
         }
+    }
+
+    /// Execute the path finding process.
+    ///
+    /// `extra_threads` will be spawned to help speed up the optimization process.
+    pub fn execute_with_threads(self, extra_threads: usize) -> (Self, Vec<Vec<usize>>) {
+        let worker = Arc::new(self.init());
+        let threads = (0..extra_threads)
+            .map(|_| {
+                let dupe_worker = Arc::clone(&worker);
+                thread::spawn(move || dupe_worker.work())
+            })
+            .collect::<Vec<_>>();
+
+        worker.work();
+        threads.into_iter().for_each(|t| t.join().unwrap());
+        Arc::try_unwrap(worker).unwrap().finish()
     }
 }
 
 impl QueuePathFinder {
+    /// Perform a single step in finding new paths.
+    ///
+    /// A single step may can find zero or more candidate path nodes to explore, and can also find
+    /// zero or more good paths.
     pub fn step(&self) -> bool {
         let future_node = {
             let mut new_work = self.new_work.lock().unwrap();
@@ -188,7 +132,7 @@ impl QueuePathFinder {
 
         self.second_snap
             .iter_addr(future_node.second_addr, true)
-            .filter(|(_sra, spv)| future_node.second_addr.wrapping_sub(*spv) <= MAX_OFFSET)
+            .filter(|(_sra, spv)| future_node.second_addr.wrapping_sub(*spv) <= self.max_offset)
             .for_each(|(sra, _spv)| {
                 let mut nodes_walked = self.nodes_walked.lock().unwrap();
                 self.good_finds.lock().unwrap().push(nodes_walked.len());
@@ -201,7 +145,7 @@ impl QueuePathFinder {
         if future_node.depth != 0 {
             self.second_snap
                 .iter_addr(future_node.second_addr, false)
-                .filter(|(_sra, spv)| future_node.second_addr.wrapping_sub(*spv) <= MAX_OFFSET)
+                .filter(|(_sra, spv)| future_node.second_addr.wrapping_sub(*spv) <= self.max_offset)
                 .for_each(|(sra, spv)| {
                     let offset = future_node.second_addr - spv;
                     let first_addr = future_node.first_addr - offset;
@@ -232,5 +176,94 @@ impl QueuePathFinder {
         }
 
         true
+    }
+
+    /// Begin working on finding the pointer paths, until there's no more work left.
+    pub fn work(&self) {
+        while self.step() {}
+    }
+
+    /// Return how many paths have been found so far.
+    pub fn paths_found(&self) -> usize {
+        self.good_finds.lock().unwrap().len()
+    }
+
+    /// Return how many candidate path nodes have been found so far.
+    pub fn scanned_node_count(&self) -> usize {
+        self.nodes_walked.lock().unwrap().len()
+    }
+
+    /// Finish the finding job.
+    ///
+    /// The return value includes a vector with the vectors of valid offsets.
+    pub fn finish(self) -> (PointerPathFinder, Vec<Vec<usize>>) {
+        let QueuePathFinder {
+            first_snap,
+            second_snap,
+            good_finds,
+            nodes_walked,
+            max_offset,
+            max_depth,
+            first_addr,
+            ..
+        } = self;
+
+        let good_finds = good_finds.into_inner().unwrap();
+        let nodes_walked = nodes_walked.into_inner().unwrap();
+
+        let paths = good_finds
+            .into_iter()
+            .map(|mut node_idx| {
+                let mut addresses = Vec::with_capacity((max_depth + 1) as usize);
+                // Walk the linked list.
+                loop {
+                    let node = &nodes_walked[node_idx];
+                    addresses.push(node.addr);
+                    // A node whose parent is itself represents the end.
+                    // This is similar to trying to `cd ..` when already at `/`.
+                    if node_idx == node.parent {
+                        break;
+                    } else {
+                        node_idx = node.parent;
+                    }
+                }
+
+                // Now update the list of addresses to turn them into offsets.
+                let mut offsets = addresses;
+                for i in (1..offsets.len()).rev() {
+                    let ptr_value = usize::from_ne_bytes(
+                        second_snap
+                            .read_memory(offsets[i - 1], std::mem::size_of::<usize>())
+                            .unwrap()
+                            .try_into()
+                            .unwrap(),
+                    );
+                    offsets[i] -= ptr_value;
+                }
+
+                /*
+                The reverse operation (in pseudo-code) would be:
+                    base = base addr
+                    for offset in offsets[..-1] {
+                        base = [base + offset]
+                    }
+                    value = [base + offsets[-1]]
+                */
+
+                offsets
+            })
+            .collect();
+
+        (
+            PointerPathFinder {
+                snap_a: first_snap,
+                addr_a: first_addr,
+                snap_b: second_snap,
+                addr_b: nodes_walked[0].addr,
+                max_offset: max_offset,
+                max_length: max_depth,
+            },
+            paths,
+        )
     }
 }
