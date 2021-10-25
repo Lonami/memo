@@ -141,7 +141,7 @@ impl Snapshot {
 
         worker.work();
         threads.into_iter().for_each(|t| t.join().unwrap());
-        Arc::try_unwrap(worker).unwrap().snapshot
+        Arc::try_unwrap(worker).unwrap().finish()
     }
 
     /// Compact the memory used after an optimization.
