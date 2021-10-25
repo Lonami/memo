@@ -1,6 +1,7 @@
-use crate::Process;
+use crate::{Process, Region};
 use std::collections::{BinaryHeap, HashSet};
 use std::convert::TryInto;
+use std::io;
 use std::mem;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -33,6 +34,49 @@ define_serdes! {
         // corresponding memory that point into `blocks[4]`.
         pub block_idx_pointed_from: Vec<Vec<usize>>,
     }
+}
+
+/// Take a memory snapshot of the given regions of the process.
+pub fn take_memory_snapshot<I>(process: &Process, regions: I) -> io::Result<Snapshot>
+where
+    I: IntoIterator<Item = Region>,
+{
+    let modules = process.list_modules()?;
+    let mut blocks = regions
+        .into_iter()
+        .map(|r| Block {
+            real_addr: r.addr(),
+            mem_offset: 0,
+            len: r.size(),
+            base: modules.iter().any(|m| m.addr() == r.addr()),
+        })
+        .collect::<Vec<_>>();
+    blocks.sort_by_key(|b| b.real_addr);
+
+    let mut mem_offset = 0;
+    let mut memory = vec![0; blocks.iter().map(|b| b.len).sum()];
+    for block in blocks.iter_mut() {
+        process.read_memory_exact(
+            block.real_addr,
+            &mut memory[mem_offset..mem_offset + block.len],
+        )?;
+        block.mem_offset = mem_offset;
+        mem_offset += block.len;
+    }
+
+    // Without running the "optimization", we have to assume every block
+    // can point to any other block (such `block_map` is cloned for every
+    // block index).
+    let block_map = (0..blocks.len()).collect::<Vec<_>>();
+    let block_idx_pointed_from = (0..blocks.len())
+        .map(|_| block_map.clone())
+        .collect::<Vec<_>>();
+
+    Ok(Snapshot {
+        memory,
+        blocks,
+        block_idx_pointed_from,
+    })
 }
 
 pub fn prepare_optimized_scan(snap: &mut Snapshot) {
@@ -198,58 +242,6 @@ fn run_find_pointer_paths(qpf: Arc<QueuePathFinder>) {
 }
 
 impl Snapshot {
-    pub fn new(process: &Process, regions: &[winapi::um::winnt::MEMORY_BASIC_INFORMATION]) -> Self {
-        let modules = process.enum_modules().unwrap();
-        let mut blocks = regions
-            .iter()
-            .map(|r| Block {
-                real_addr: r.BaseAddress as usize,
-                mem_offset: 0,
-                len: r.RegionSize,
-                base: modules.iter().any(|module| {
-                    let base = r.AllocationBase as usize;
-                    let addr = *module as usize;
-                    base == addr
-                }),
-            })
-            .collect::<Vec<_>>();
-
-        blocks.sort_by_key(|b| b.real_addr);
-
-        let mut memory = Vec::new();
-        let blocks = blocks
-            .into_iter()
-            .filter_map(|b| match process.read_memory(b.real_addr, b.len) {
-                Ok(mut chunk) => {
-                    let len = chunk.len();
-                    let mem_offset = memory.len();
-                    memory.append(&mut chunk);
-                    Some(Block {
-                        real_addr: b.real_addr,
-                        mem_offset,
-                        len,
-                        base: b.base,
-                    })
-                }
-                Err(_) => None,
-            })
-            .collect::<Vec<_>>();
-
-        // Without running the "optimization", we have to assume every block
-        // can point to any other block (such `block_map` is cloned for every
-        // block index).
-        let block_map = (0..blocks.len()).collect::<Vec<_>>();
-        let block_idx_pointed_from = (0..blocks.len())
-            .map(|_| block_map.clone())
-            .collect::<Vec<_>>();
-
-        Self {
-            memory,
-            blocks,
-            block_idx_pointed_from,
-        }
-    }
-
     pub fn read_memory(&self, addr: usize, n: usize) -> Option<&[u8]> {
         let block = &self.blocks[self.get_block_idx(addr)];
         let delta = addr - block.real_addr;
