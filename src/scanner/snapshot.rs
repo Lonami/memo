@@ -2,7 +2,6 @@ use crate::{Process, Region};
 use std::collections::{BinaryHeap, HashSet};
 use std::convert::TryInto;
 use std::io;
-use std::mem;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -34,6 +33,13 @@ define_serdes! {
         // corresponding memory that point into `blocks[4]`.
         pub block_idx_pointed_from: Vec<Vec<usize>>,
     }
+}
+
+#[derive(Debug)]
+pub struct OptimizerWorker {
+    snapshot: Snapshot,
+    pending: Mutex<Vec<usize>>,
+    done: Mutex<Vec<(usize, HashSet<usize>)>>,
 }
 
 /// Take a memory snapshot of the given regions of the process.
@@ -79,72 +85,82 @@ where
     })
 }
 
-pub fn prepare_optimized_scan(snap: &mut Snapshot) {
-    let mut block_idx_pointed_from = (0..snap.blocks.len())
-        .map(|_| HashSet::new())
-        .collect::<Vec<_>>();
+impl Snapshot {
+    /// Convert the snapshot into an [`OptimizerWorker`].
+    ///
+    /// After the optimizer runs, searching paths within this snapshot will be considerably faster.
+    ///
+    /// The optimizer can be cloned and executed from multiple threads at the same time.
+    pub fn into_optimizer(self) -> OptimizerWorker {
+        OptimizerWorker {
+            pending: Mutex::new((0..self.blocks.len()).collect::<Vec<_>>()),
+            done: Mutex::new(Vec::new()),
+            snapshot: self,
+        }
+    }
 
-    // SAFETY: we need the 'static lifetime for the threads, but they're not actually used for the
-    // 'static lifetime, because we make sure to join them before.
-    let (snap_ref, bipf_tail) = unsafe {
-        (
-            mem::transmute::<&'_ _, &'static _>(snap),
-            mem::transmute::<&'_ mut _, &'static mut [_]>(block_idx_pointed_from.as_mut_slice()),
-        )
-    };
+    /// Return an optimized version of self.
+    ///
+    /// `extra_threads` will be spawned to help speed up the optimization process.
+    pub fn optimized_with_threads(self, extra_threads: usize) -> Self {
+        let worker = Arc::new(self.into_optimizer());
+        let threads = (0..extra_threads)
+            .map(|_| {
+                let dupe_worker = Arc::clone(&worker);
+                thread::spawn(move || dupe_worker.work())
+            })
+            .collect::<Vec<_>>();
 
-    // Split the workload of filling `block_idx_pointed_from` by making multiple chunks and
-    // filling each of them on its own thread.
-    let chunk_size = block_idx_pointed_from.len() / 4;
-    let (bipf_a, bipf_tail) = bipf_tail.split_at_mut(chunk_size);
-    let (bipf_b, bipf_tail) = bipf_tail.split_at_mut(chunk_size);
-    let (bipf_c, bipf_tail) = bipf_tail.split_at_mut(chunk_size);
+        worker.work();
+        threads.into_iter().for_each(|t| t.join().unwrap());
+        Arc::try_unwrap(worker).unwrap().snapshot
+    }
+}
 
-    fn fill_map(snap: &Snapshot, block_map: &mut [HashSet<usize>], offset: usize) {
+impl OptimizerWorker {
+    /// Begin working on the optimization.
+    pub fn work(&self) {
         // For each block...
-        for (i, block) in snap
-            .blocks
-            .iter()
-            .skip(offset)
-            .take(block_map.len())
-            .enumerate()
-        {
+        while let Some(block_idx) = self.pending.lock().unwrap().pop() {
+            let block = &self.snapshot.blocks[block_idx];
+            let mut block_map = HashSet::new();
+
             // ...scan all the pointer-values...
-            for (ra, pv) in snap.iter_all_addr() {
+            for (ra, pv) in self.snapshot.iter_all_addr() {
                 // ...and if any of the pointer-values points inside this block...
                 if let Some(delta) = pv.checked_sub(block.real_addr) {
                     if delta < block.len {
                         // ...then we know that the block with this pointer-value points to our original block.
-                        block_map[i].insert(snap.get_block_idx(ra));
+                        block_map.insert(self.snapshot.get_block_idx(ra));
                     }
                 }
             }
+
+            self.done.lock().unwrap().push((block_idx, block_map));
         }
     }
 
-    let threads = [
-        thread::spawn(move || fill_map(snap_ref, bipf_a, chunk_size * 0)),
-        thread::spawn(move || fill_map(snap_ref, bipf_b, chunk_size * 1)),
-        thread::spawn(move || fill_map(snap_ref, bipf_c, chunk_size * 2)),
-    ];
-    fill_map(snap_ref, bipf_tail, chunk_size * 3);
-
-    for thread in threads {
-        // Ignore errors or else threads could actually refer to the 'static references after drop.
-        drop(thread.join());
+    /// Attempts to finish the optimization job.
+    ///
+    /// Panics if there are other workers still alive (if you spawned threads, join them first).
+    pub fn finish(self) -> Snapshot {
+        let mut snap = self.snapshot;
+        let mut done = self.done.into_inner().unwrap();
+        if !done.is_empty() {
+            done.sort_by_key(|(idx, _set)| *idx);
+            snap.block_idx_pointed_from = done
+                .into_iter()
+                .map(|(_idx, set)| {
+                    let mut vec = set.into_iter().collect::<Vec<_>>();
+                    // TODO would it help to sort by "closest block" first?
+                    // and stop scanning after a match in any block is found?
+                    vec.sort();
+                    vec
+                })
+                .collect::<Vec<_>>();
+        }
+        snap
     }
-
-    // Convert set into a sorted vector.
-    snap.block_idx_pointed_from = block_idx_pointed_from
-        .into_iter()
-        .map(|set| {
-            let mut vec = set.into_iter().collect::<Vec<_>>();
-            // TODO would it help to sort by "closest block" first?
-            // and stop scanning after a match in any block is found?
-            vec.sort();
-            vec
-        })
-        .collect::<Vec<_>>();
 }
 
 // Returns a vector with the vectors of valid offsets.
