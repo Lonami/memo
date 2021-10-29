@@ -123,12 +123,7 @@ impl Snapshot {
     /// After the optimizer runs, searching paths within this snapshot will be considerably faster.
     ///
     /// The optimizer can be cloned and executed from multiple threads at the same time.
-    ///
-    /// Only blocks for which the predicate returns `true` will be kept.
-    pub fn into_optimizer<F>(self, mut predicate: F) -> OptimizerWorker
-    where
-        F: FnMut(&Block) -> bool,
-    {
+    pub fn into_optimizer(self) -> OptimizerWorker {
         // This "bitmap" answers: should we bother looking for a possible block at this address?
         let mut should_bother = vec![false; 1 << OPT_MEM_MAP_BITCOUNT];
         for block in self.blocks.iter() {
@@ -143,13 +138,7 @@ impl Snapshot {
 
         OptimizerWorker {
             mem_map: should_bother,
-            pending: Mutex::new(
-                self.blocks
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, block)| predicate(block).then(|| i))
-                    .collect::<Vec<_>>(),
-            ),
+            pending: Mutex::new((0..self.blocks.len()).collect::<Vec<_>>()),
             done: Mutex::new(Vec::new()),
             snapshot: self,
         }
@@ -158,13 +147,8 @@ impl Snapshot {
     /// Return an optimized version of self.
     ///
     /// `extra_threads` will be spawned to help speed up the optimization process.
-    ///
-    /// Only blocks for which the predicate returns `true` will be kept.
-    pub fn optimized_with_threads<F>(self, extra_threads: usize, predicate: F) -> Self
-    where
-        F: FnMut(&Block) -> bool,
-    {
-        let worker = Arc::new(self.into_optimizer(predicate));
+    pub fn optimized_with_threads(self, extra_threads: usize) -> Self {
+        let worker = Arc::new(self.into_optimizer());
         let threads = (0..extra_threads)
             .map(|_| {
                 let dupe_worker = Arc::clone(&worker);
