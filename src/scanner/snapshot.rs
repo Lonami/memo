@@ -1,7 +1,7 @@
 use crate::ffi::{Process, Region};
 
 use crate::SerDes;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::convert::TryInto;
 use std::io::{self, Read, Write};
 use std::num::NonZeroUsize;
@@ -28,7 +28,7 @@ pub struct Snapshot {
     // `blocks[4]`.
     //
     // If an index is not present here as a key, it is considered to not be interesting.
-    pub block_idx_pointed_from: HashMap<usize, Vec<usize>>,
+    pub block_idx_pointed_from: Vec<Vec<usize>>,
 }
 
 #[derive(Debug)]
@@ -87,7 +87,7 @@ where
     // can point to any other block (such `block_map` is cloned for every
     // block index).
     let block_map = (0..blocks.len()).collect::<Vec<_>>();
-    let block_idx_pointed_from = (0..blocks.len()).map(|i| (i, block_map.clone())).collect();
+    let block_idx_pointed_from = (0..blocks.len()).map(|_| block_map.clone()).collect();
 
     Ok(Snapshot {
         memory,
@@ -103,8 +103,7 @@ impl Snapshot {
     ///
     /// The optimizer can be cloned and executed from multiple threads at the same time.
     ///
-    /// Only blocks for which the predicate returns `true` will be kept. The other blocks will be
-    /// dropped. Memory can later be reclaimed with [`Self::compact`].
+    /// Only blocks for which the predicate returns `true` will be kept.
     pub fn into_optimizer<F>(self, mut predicate: F) -> OptimizerWorker
     where
         F: FnMut(&Block) -> bool,
@@ -126,8 +125,7 @@ impl Snapshot {
     ///
     /// `extra_threads` will be spawned to help speed up the optimization process.
     ///
-    /// Only blocks for which the predicate returns `true` will be kept. The other blocks will be
-    /// dropped. Memory can later be reclaimed with [`Self::compact`].
+    /// Only blocks for which the predicate returns `true` will be kept.
     pub fn optimized_with_threads<F>(self, extra_threads: usize, predicate: F) -> Self
     where
         F: FnMut(&Block) -> bool,
@@ -143,41 +141,6 @@ impl Snapshot {
         worker.work();
         threads.into_iter().for_each(|t| t.join().unwrap());
         Arc::try_unwrap(worker).unwrap().finish()
-    }
-
-    /// Compact the memory used after an optimization.
-    ///
-    /// This is not done by default as it may involve large allocations to move data around.
-    pub fn compact(&mut self) {
-        let new_blocks = self
-            .blocks
-            .iter()
-            .cloned()
-            .enumerate()
-            .filter_map(|(i, block)| self.block_idx_pointed_from.contains_key(&i).then(|| block))
-            .collect::<Vec<_>>();
-
-        let mut new_memory = Vec::with_capacity(new_blocks.iter().map(|b| b.len).sum());
-        let mut mem_offset = 0;
-        let mut idx_map = HashMap::with_capacity(new_blocks.len());
-
-        for (i, block) in self.blocks.iter().enumerate() {
-            if self.block_idx_pointed_from.contains_key(&i) {
-                new_memory.extend_from_slice(&self.memory[mem_offset..mem_offset + block.len]);
-                idx_map.insert(i, idx_map.len());
-            }
-            mem_offset += block.len;
-        }
-
-        let new_block_idx_pointed_from = self
-            .block_idx_pointed_from
-            .iter()
-            .map(|(k, vv)| (idx_map[k], vv.iter().map(|v| idx_map[v]).collect()))
-            .collect();
-
-        self.memory = new_memory;
-        self.blocks = new_blocks;
-        self.block_idx_pointed_from = new_block_idx_pointed_from;
     }
 
     pub fn read_memory(&self, addr: usize, n: usize) -> Option<&[u8]> {
@@ -203,10 +166,7 @@ impl Snapshot {
     /// Will not yield results if the address belongs to a block which was optimized away.
     pub fn iter_addr(&self, from_addr: usize, base: bool) -> AddrIter<'_> {
         let block_idx = self.get_block_idx(from_addr);
-        let block_map = match self.block_idx_pointed_from.get(&block_idx) {
-            Some(map) => map.as_slice(),
-            None => &[],
-        };
+        let block_map = &self.block_idx_pointed_from[block_idx];
 
         let block = block_map.get(0).map(|i| &self.blocks[*i]);
         AddrIter {
@@ -249,13 +209,11 @@ impl Snapshot {
             block.mem_offset.save(writer)?;
             block.len.save(writer)?;
             block.base.save(writer)?;
-            if let Some(vec) = self.block_idx_pointed_from.get(&i) {
-                vec.len().save(writer)?;
-                for item in vec {
-                    item.save(writer)?;
-                }
-            } else {
-                writer.write_all(&0usize.to_le_bytes())?;
+
+            let vec = &self.block_idx_pointed_from[i];
+            vec.len().save(writer)?;
+            for item in vec {
+                item.save(writer)?;
             }
         }
 
@@ -269,8 +227,8 @@ impl Snapshot {
     /// If the data is malformed, this method may allocate an absurd amount of memory and fail.
     pub fn deserialize_from<R: Read>(reader: &mut R) -> io::Result<Self> {
         let mut blocks = Vec::with_capacity(usize::load(reader)?);
-        let mut block_idx_pointed_from = HashMap::new();
-        for i in 0..blocks.capacity() {
+        let mut block_idx_pointed_from = Vec::with_capacity(blocks.capacity());
+        for _ in 0..blocks.capacity() {
             blocks.push(Block {
                 real_addr: usize::load(reader)?,
                 mem_offset: usize::load(reader)?,
@@ -281,7 +239,7 @@ impl Snapshot {
             for _ in 0..vec.capacity() {
                 vec.push(usize::load(reader)?);
             }
-            block_idx_pointed_from.insert(i, vec);
+            block_idx_pointed_from.push(vec);
         }
 
         let mut memory = vec![0; usize::load(reader)?];
@@ -321,16 +279,17 @@ impl OptimizerWorker {
     /// Finish the optimization job.
     pub fn finish(self) -> Snapshot {
         let mut snap = self.snapshot;
-        let done = self.done.into_inner().unwrap();
+        let mut done = self.done.into_inner().unwrap();
         if !done.is_empty() {
+            done.sort_by_key(|t| t.0);
             snap.block_idx_pointed_from = done
                 .into_iter()
-                .map(|(idx, set)| {
+                .map(|(_, set)| {
                     let mut vec = set.into_iter().collect::<Vec<_>>();
                     // TODO would it help to sort by "closest block" first?
                     // and stop scanning after a match in any block is found?
                     vec.sort();
-                    (idx, vec)
+                    vec
                 })
                 .collect();
         }
