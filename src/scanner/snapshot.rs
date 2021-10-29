@@ -1,8 +1,9 @@
 use crate::ffi::{Process, Region};
 
+use crate::SerDes;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
-use std::io;
+use std::io::{self, Read, Write};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -236,6 +237,61 @@ impl Snapshot {
                     usize::from_ne_bytes(chunk.try_into().unwrap()),
                 )
             })
+    }
+
+    /// Serialize this snapshot into the given writer.
+    ///
+    /// Useful to save a snapshot for later analysis via [`Self::deserialize_from`].
+    pub fn serialize_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        self.blocks.len().save(writer)?;
+        for (i, block) in self.blocks.iter().enumerate() {
+            block.real_addr.save(writer)?;
+            block.mem_offset.save(writer)?;
+            block.len.save(writer)?;
+            block.base.save(writer)?;
+            if let Some(vec) = self.block_idx_pointed_from.get(&i) {
+                vec.len().save(writer)?;
+                for item in vec {
+                    item.save(writer)?;
+                }
+            } else {
+                writer.write_all(&0usize.to_le_bytes())?;
+            }
+        }
+
+        self.memory.len().save(writer)?;
+        writer.write_all(&self.memory)?;
+        Ok(())
+    }
+
+    /// Deserailize a snapshot instance from a given reader.
+    ///
+    /// If the data is malformed, this method may allocate an absurd amount of memory and fail.
+    pub fn deserialize_from<R: Read>(reader: &mut R) -> io::Result<Self> {
+        let mut blocks = Vec::with_capacity(usize::load(reader)?);
+        let mut block_idx_pointed_from = HashMap::new();
+        for i in 0..blocks.capacity() {
+            blocks.push(Block {
+                real_addr: usize::load(reader)?,
+                mem_offset: usize::load(reader)?,
+                len: usize::load(reader)?,
+                base: bool::load(reader)?,
+            });
+            let mut vec = Vec::with_capacity(usize::load(reader)?);
+            for _ in 0..vec.capacity() {
+                vec.push(usize::load(reader)?);
+            }
+            block_idx_pointed_from.insert(i, vec);
+        }
+
+        let mut memory = vec![0; usize::load(reader)?];
+        reader.read_exact(&mut memory)?;
+
+        Ok(Self {
+            memory,
+            blocks,
+            block_idx_pointed_from,
+        })
     }
 }
 
