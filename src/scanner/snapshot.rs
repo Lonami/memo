@@ -251,7 +251,7 @@ impl OptimizerWorker {
             let val = { self.pending.lock().unwrap().pop() };
             val
         } {
-            let mut points_to = HashSet::new();
+            let mut points_to = vec![false; self.snapshot.blocks.len()];
 
             // ...scan all the pointer-values...
             for pv in self.snapshot.iter_pointer_values(block_idx) {
@@ -263,19 +263,26 @@ impl OptimizerWorker {
                 {
                     // ...then we know that the block with this pointer-value points to our original block.
                     Ok(idx) => {
-                        points_to.insert(idx);
+                        points_to[idx] = true;
                     }
                     Err(0) => {}
                     Err(idx) => {
                         let block = &self.snapshot.blocks[idx - 1];
                         if (pv - block.real_addr) < block.len {
-                            points_to.insert(idx - 1);
+                            points_to[idx - 1] = true;
                         }
                     }
                 }
             }
 
-            self.done.lock().unwrap().push((block_idx, points_to));
+            self.done.lock().unwrap().push((
+                block_idx,
+                points_to
+                    .into_iter()
+                    .enumerate()
+                    .flat_map(|(i, b)| b.then(|| i))
+                    .collect::<HashSet<_>>(),
+            ));
         }
     }
 
