@@ -47,4 +47,9 @@ impl Region {
     pub fn size(&self) -> usize {
         self.0.RegionSize
     }
+
+    /// Return the access protection of the pages in this region.
+    pub fn protection(&self) -> u32 {
+        self.0.Protect
+    }
 }
