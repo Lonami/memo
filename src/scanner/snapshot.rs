@@ -257,7 +257,10 @@ impl OptimizerWorker {
     /// Begin working on the optimization.
     pub fn work(&self) {
         // For each block...
-        while let Some(block_idx) = self.pending.lock().unwrap().pop() {
+        while let Some(block_idx) = {
+            let val = { self.pending.lock().unwrap().pop() };
+            val
+        } {
             let block = &self.snapshot.blocks[block_idx];
             let mut block_map = HashSet::new();
 
