@@ -4,9 +4,23 @@ use crate::SerDes;
 use std::collections::HashSet;
 use std::convert::TryInto;
 use std::io::{self, Read, Write};
+use std::mem;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 use std::thread;
+
+/// How many bits to be used to index into the optimizer's memory map.
+///
+/// A megabyte worth seems to be a good amount.
+const OPT_MEM_MAP_BITCOUNT: usize = 20;
+
+/// How many of the low-order bits of a pointer-value to skip when indexing into the memory map.
+///
+/// A bit under half the bits used by an address (3 instead of all 8) seems to be a good amount.
+const OPT_MEM_MAP_SHIFT: usize = 3 * mem::size_of::<usize>();
+
+/// Mask used when indexing into the memory map.
+const OPT_MEM_MAP_MASK: usize = (1 << OPT_MEM_MAP_BITCOUNT) - 1;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Block {
@@ -34,6 +48,11 @@ pub struct Snapshot {
 #[derive(Debug)]
 pub struct OptimizerWorker {
     snapshot: Snapshot,
+    /// Memory map of every address condensed into a much smaller space.
+    ///
+    /// Used to quickly check whether a certain pointer-value may fall within a block.
+    /// If it's definitely not within a block, finding the matching block can be skipped.
+    mem_map: Vec<bool>,
     /// The memory region associated with block X is yet to be scanned.
     pending: Mutex<Vec<usize>>,
     /// The block at X.0 points to the blocks in X.1.
@@ -110,7 +129,20 @@ impl Snapshot {
     where
         F: FnMut(&Block) -> bool,
     {
+        // This "bitmap" answers: should we bother looking for a possible block at this address?
+        let mut should_bother = vec![false; 1 << OPT_MEM_MAP_BITCOUNT];
+        for block in self.blocks.iter() {
+            let start = block.real_addr >> OPT_MEM_MAP_SHIFT;
+            // Add +1 to the count to also include this block's end,
+            // and another +1 to account for "may be within, may not".
+            let count = (block.len >> OPT_MEM_MAP_SHIFT) + 2;
+            for addr in start..start + count {
+                should_bother[addr & OPT_MEM_MAP_MASK] = true;
+            }
+        }
+
         OptimizerWorker {
+            mem_map: should_bother,
             pending: Mutex::new(
                 self.blocks
                     .iter()
@@ -254,7 +286,11 @@ impl OptimizerWorker {
             let mut points_to = vec![false; self.snapshot.blocks.len()];
 
             // ...scan all the pointer-values...
-            for pv in self.snapshot.iter_pointer_values(block_idx) {
+            for pv in self
+                .snapshot
+                .iter_pointer_values(block_idx)
+                .filter(|pv| self.mem_map[(pv >> OPT_MEM_MAP_SHIFT) & OPT_MEM_MAP_MASK])
+            {
                 // ...and if any of the pointer-values points into a block...
                 match self
                     .snapshot
