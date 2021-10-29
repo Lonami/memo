@@ -1,6 +1,6 @@
 use crate::ffi::{Process, Region};
-
 use crate::SerDes;
+
 use std::collections::HashSet;
 use std::convert::TryInto;
 use std::io::{self, Read, Write};
@@ -262,6 +262,10 @@ impl Snapshot {
 impl OptimizerWorker {
     /// Begin working on the optimization.
     pub fn work(&self) {
+        // Required for unchecked access safety.
+        assert!(self.mem_map.len().is_power_of_two());
+        assert_eq!(OPT_MEM_MAP_MASK, self.mem_map.len() - 1);
+
         // For each block...
         while let Some(block_idx) = {
             let val = { self.pending.lock().unwrap().pop() };
@@ -270,10 +274,14 @@ impl OptimizerWorker {
             let mut points_to = vec![false; self.snapshot.blocks.len()];
 
             // ...scan all the pointer-values...
-            for pv in self
-                .snapshot
-                .iter_pointer_values(block_idx)
-                .filter(|pv| self.mem_map[(pv >> OPT_MEM_MAP_SHIFT) & OPT_MEM_MAP_MASK])
+            for pv in self.snapshot.iter_pointer_values(block_idx).filter(|pv|
+                    // SAFETY: the mask is defined as the size of the memory map minus one,
+                    // and the size of the memory map is a power of two mask behaves like modulo.
+                    unsafe {
+                    *self
+                        .mem_map
+                        .get_unchecked((pv >> OPT_MEM_MAP_SHIFT) & OPT_MEM_MAP_MASK)
+                })
             {
                 // ...and if any of the pointer-values points into a block...
                 match self
@@ -283,13 +291,21 @@ impl OptimizerWorker {
                 {
                     // ...then we know that the block with this pointer-value points to our original block.
                     Ok(idx) => {
-                        points_to[idx] = true;
+                        // SAFETY: `points_to` has same length as `snapshot.blocks`,
+                        // and we found an index into the latter.
+                        unsafe {
+                            *points_to.get_unchecked_mut(idx) = true;
+                        }
                     }
                     Err(0) => {}
                     Err(idx) => {
                         let block = &self.snapshot.blocks[idx - 1];
                         if (pv - block.real_addr) < block.len {
-                            points_to[idx - 1] = true;
+                            // SAFETY: `points_to` has same length as `snapshot.blocks`,
+                            // and we found a valid insertion index into the latter.
+                            unsafe {
+                                *points_to.get_unchecked_mut(idx - 1) = true;
+                            }
                         }
                     }
                 }
