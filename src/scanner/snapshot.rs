@@ -34,7 +34,9 @@ pub struct Snapshot {
 #[derive(Debug)]
 pub struct OptimizerWorker {
     snapshot: Snapshot,
+    /// The memory region associated with block X is yet to be scanned.
     pending: Mutex<Vec<usize>>,
+    /// The block at X.0 points to the blocks in X.1.
     done: Mutex<Vec<(usize, HashSet<usize>)>>,
 }
 
@@ -180,23 +182,11 @@ impl Snapshot {
         }
     }
 
-    pub fn iter_all_addr(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
-        let mut blocks = self.blocks.iter().peekable();
-        self.memory
+    fn iter_pointer_values(&self, block: usize) -> impl Iterator<Item = usize> + '_ {
+        let block = &self.blocks[block];
+        self.memory[block.mem_offset..block.mem_offset + block.len]
             .chunks_exact(8)
-            .enumerate()
-            .map(move |(i, chunk)| {
-                let mut block = *blocks.peek().unwrap();
-                if i * 8 >= block.mem_offset + block.len {
-                    // Roll over to the next block.
-                    block = blocks.next().unwrap();
-                }
-
-                (
-                    block.real_addr + (i * 8 - block.mem_offset),
-                    usize::from_ne_bytes(chunk.try_into().unwrap()),
-                )
-            })
+            .map(|chunk| usize::from_ne_bytes(chunk.try_into().unwrap()))
     }
 
     /// Serialize this snapshot into the given writer.
@@ -261,41 +251,49 @@ impl OptimizerWorker {
             let val = { self.pending.lock().unwrap().pop() };
             val
         } {
-            let block = &self.snapshot.blocks[block_idx];
-            let mut block_map = HashSet::new();
+            let mut points_to = HashSet::new();
 
             // ...scan all the pointer-values...
-            for (ra, pv) in self.snapshot.iter_all_addr() {
-                // ...and if any of the pointer-values points inside this block...
-                if let Some(delta) = pv.checked_sub(block.real_addr) {
-                    if delta < block.len {
-                        // ...then we know that the block with this pointer-value points to our original block.
-                        block_map.insert(self.snapshot.get_block_idx(ra));
+            for pv in self.snapshot.iter_pointer_values(block_idx) {
+                // ...and if any of the pointer-values points into a block...
+                match self
+                    .snapshot
+                    .blocks
+                    .binary_search_by_key(&pv, |b| b.real_addr)
+                {
+                    // ...then we know that the block with this pointer-value points to our original block.
+                    Ok(idx) => {
+                        points_to.insert(idx);
+                    }
+                    Err(0) => {}
+                    Err(idx) => {
+                        let block = &self.snapshot.blocks[idx - 1];
+                        if (pv - block.real_addr) < block.len {
+                            points_to.insert(idx - 1);
+                        }
                     }
                 }
             }
 
-            self.done.lock().unwrap().push((block_idx, block_map));
+            self.done.lock().unwrap().push((block_idx, points_to));
         }
     }
 
     /// Finish the optimization job.
     pub fn finish(self) -> Snapshot {
         let mut snap = self.snapshot;
-        let mut done = self.done.into_inner().unwrap();
-        if !done.is_empty() {
-            done.sort_by_key(|t| t.0);
-            snap.block_idx_pointed_from = done
-                .into_iter()
-                .map(|(_, set)| {
-                    let mut vec = set.into_iter().collect::<Vec<_>>();
-                    // TODO would it help to sort by "closest block" first?
-                    // and stop scanning after a match in any block is found?
-                    vec.sort();
-                    vec
-                })
-                .collect();
+        let done = self.done.into_inner().unwrap();
+
+        snap.block_idx_pointed_from = (0..snap.blocks.len())
+            .map(|_| Vec::new())
+            .collect::<Vec<_>>();
+
+        for (block_idx, points_to) in done {
+            for target_idx in points_to {
+                snap.block_idx_pointed_from[target_idx].push(block_idx);
+            }
         }
+
         snap
     }
 }
