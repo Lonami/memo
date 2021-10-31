@@ -158,12 +158,12 @@ impl Process {
         self.base_module()?.truncated_name(MAX_PROC_NAME_LEN)
     }
 
-    /// Return a iterator over all the memory pages allocated by the process.
+    /// Return a iterator over all the memory regions along with the access of the process.
     ///
     /// When a [`crate::ffi::Region::addr`] is equal to a [`crate::ffi::Module::addr`], you can
     /// consider every address within that page "stable" (i.e. it will always be the same,
     /// regardless of any dynamic allocation the process may perform).
-    pub fn iter_memory_pages(&self) -> super::region::Iter<'_> {
+    pub fn iter_memory_regions(&self) -> super::region::Iter<'_> {
         super::region::Iter {
             process: self,
             base: 0,
