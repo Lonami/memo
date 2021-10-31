@@ -1,8 +1,6 @@
+mod step1;
 pub mod ui;
 
-use memo::scan::{Scan, Scannable};
-use memo::{process, scan, snapshot, Process};
-use std::convert::TryInto;
 use std::fmt;
 use winapi::um::winnt;
 
@@ -28,10 +26,10 @@ fn main() {
     let pid = PROGRAM_PID
         .map(|pid| pid.parse::<u32>().unwrap())
         .unwrap_or_else(|| {
-            let processes = process::enum_proc()
+            let processes = memo::list_processes(MAX_PIDS)
                 .unwrap()
                 .into_iter()
-                .flat_map(Process::open)
+                .flat_map(memo::Process::open)
                 .flat_map(|proc| match proc.name() {
                     Ok(name) => Ok(ProcessItem {
                         pid: proc.pid(),
@@ -45,7 +43,7 @@ fn main() {
             item.pid
         });
 
-    let process = Process::open(pid).unwrap();
+    let process = memo::Process::open(pid).unwrap();
     println!("Opened process {:?}", process);
 
     let mask = winnt::PAGE_EXECUTE_READWRITE
@@ -54,21 +52,23 @@ fn main() {
         | winnt::PAGE_WRITECOPY;
 
     let regions = process
-        .memory_regions()
-        .into_iter()
-        .filter(|p| (p.Protect & mask) != 0)
+        .iter_memory_regions()
+        .filter(|p| {
+            let mut buf = [0];
+            (p.protection() & mask) != 0 && process.read_memory(p.addr(), &mut buf).is_ok()
+        })
         .collect::<Vec<_>>();
 
-    println!("Scanning {} memory regions", regions.len());
-    let last_scan = repl_find_value(&regions, &process);
+    println!("Found {} memory regions to scan", regions.len());
 
-    if !maybe_do_find_ptr_path(&last_scan, &regions, &process) {
-        if !maybe_do_inject_code(pid, &last_scan, &process) {
-            do_change_value(last_scan, process);
-        }
+    match ui::prompt::<u8>("Which tutorial step to run?: ").unwrap() {
+        1 => step1::solve(process, regions),
+        2 => step1::solve(process, regions),
+        n => println!("Don't know how to solve {} just yet!", n),
     }
 }
 
+/*
 fn repl_find_value(
     regions: &[winnt::MEMORY_BASIC_INFORMATION],
     process: &Process,
@@ -309,3 +309,4 @@ fn do_change_value(last_scan: Vec<scan::Region>, process: Process) {
         })
     });
 }
+*/

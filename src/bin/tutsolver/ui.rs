@@ -1,4 +1,4 @@
-use memo::scan::{Scan, Scannable};
+//use memo::scan::{Scan, Scannable};
 use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::io::{stdin, stdout, Write};
@@ -107,6 +107,7 @@ pub fn list_picker<T: Display>(items: &[T]) -> &T {
     &items[*picked[index].1]
 }
 
+/*
 /// Prompt the user to perform a scan.
 pub fn prompt_scan() -> Result<Scan<Box<dyn Scannable>>, ()> {
     let mut input = String::new();
@@ -138,3 +139,4 @@ pub fn prompt_scan() -> Result<Scan<Box<dyn Scannable>>, ()> {
         }
     }
 }
+*/
