@@ -150,10 +150,9 @@ impl CandidateLocations {
             }
             CandidateLocations::Sparse { base, mask, scale } => {
                 let mut i = 0;
-                mask.retain(|b| {
-                    let keep = *b && predicate(*base + i * *scale);
+                mask.iter_mut().for_each(|b| {
+                    *b = *b && predicate(*base + i * *scale);
                     i += 1;
-                    keep
                 });
             }
         }
