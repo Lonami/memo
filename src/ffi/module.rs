@@ -9,9 +9,9 @@ pub struct Module<'p> {
 }
 
 impl<'p> Module<'p> {
-    /// Return the module name, truncated to `n` bytes.
+    /// Return the module name, truncated to `n` bytes, excluding the NULL byte.
     pub fn truncated_name(&self, n: usize) -> io::Result<String> {
-        let mut buffer = Vec::<u8>::with_capacity(n);
+        let mut buffer = Vec::<u8>::with_capacity(n + 1);
         // SAFETY: the handle, module and buffer are all valid.
         let length = unsafe {
             winapi::um::psapi::GetModuleBaseNameA(
@@ -26,7 +26,7 @@ impl<'p> Module<'p> {
         }
 
         // SAFETY: the call succeeded and length represents bytes.
-        unsafe { buffer.set_len(length as usize) };
+        unsafe { buffer.set_len(length as usize - 1) };
         Ok(String::from_utf8(buffer).unwrap())
     }
 
