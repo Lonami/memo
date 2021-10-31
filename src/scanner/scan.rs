@@ -111,6 +111,51 @@ pub struct LiveScan {
 }
 
 impl CandidateLocations {
+    /// Retain only the locations for which the predicate returns true.
+    ///
+    /// This reuses the existing buffer for the locations.
+    fn retain<F>(&mut self, mut predicate: F)
+    where
+        F: FnMut(usize) -> bool,
+    {
+        match self {
+            CandidateLocations::Discrete { locations } => {
+                locations.retain(|loc| predicate(*loc));
+            }
+            CandidateLocations::SmallDiscrete { base, offsets } => {
+                offsets.retain(|off| predicate(*base + *off as usize));
+            }
+            CandidateLocations::Dense { range, step } => {
+                *self = if range.len() / *step <= u16::MAX as usize {
+                    CandidateLocations::SmallDiscrete {
+                        base: range.start,
+                        offsets: range
+                            .clone()
+                            .step_by(*step)
+                            .filter_map(|loc| predicate(loc).then(|| (loc - range.start) as u16))
+                            .collect(),
+                    }
+                } else {
+                    CandidateLocations::Discrete {
+                        locations: range
+                            .clone()
+                            .step_by(*step)
+                            .filter(|loc| predicate(*loc))
+                            .collect(),
+                    }
+                }
+            }
+            CandidateLocations::Sparse { base, mask, scale } => {
+                let mut i = 0;
+                mask.retain(|b| {
+                    let keep = *b && predicate(*base + i * *scale);
+                    i += 1;
+                    keep
+                });
+            }
+        }
+    }
+
     /// Return the amount of candidate locations.
     pub fn len(&self) -> usize {
         match self {
@@ -287,23 +332,13 @@ impl LiveScan {
         // This is part of the unsafe call below, because we must make sure this size makes sense.
         assert_eq!(self.value_size, P::SIZE);
 
-        self.locations = CandidateLocations::Discrete {
-            locations: self
-                .locations
-                .iter()
-                .filter(|&addr| {
-                    // SAFETY: the locations fall within bounds, adding value_size won't be OOB,
-                    // the trait implementor guarantees unaligned reads are supported, and any
-                    // bit-pattern is valid.
-                    unsafe {
-                        P::applicable(
-                            self.memory.as_ptr().add(addr),
-                            memory.as_ptr().add(addr)
-                        )
-                    }
-                })
-                .collect(),
-        };
+        let self_memory_ptr = self.memory.as_ptr();
+        self.locations.retain(|addr| {
+            // SAFETY: the locations fall within bounds, adding value_size won't be OOB,
+            // the trait implementor guarantees unaligned reads are supported, and any
+            // bit-pattern is valid.
+            unsafe { P::applicable(self_memory_ptr.add(addr), memory.as_ptr().add(addr)) }
+        });
         self.locations.try_compact(self.value_size);
 
         mem::replace(&mut self.memory, memory)
@@ -340,21 +375,17 @@ impl LiveScan {
     {
         assert_eq!(self.memory.len(), memory.len());
 
-        self.locations = CandidateLocations::Discrete {
-            locations: self
-                .locations
-                .iter()
-                .filter(|&addr| {
-                    // SAFETY: the locations fall within bounds even after adding `value_size`.
-                    unsafe {
-                        predicate(
-                            &self.memory.get_unchecked(addr..addr + self.value_size),
-                            &memory.get_unchecked(addr..addr + self.value_size),
-                        )
-                    }
-                })
-                .collect(),
-        };
+        let self_memory = &self.memory;
+        let value_size = self.value_size;
+        self.locations.retain(|addr| {
+            // SAFETY: the locations fall within bounds even after adding `value_size`.
+            unsafe {
+                predicate(
+                    &self_memory.get_unchecked(addr..addr + value_size),
+                    &memory.get_unchecked(addr..addr + value_size),
+                )
+            }
+        });
         self.locations.try_compact(self.value_size);
 
         mem::replace(&mut self.memory, memory)
