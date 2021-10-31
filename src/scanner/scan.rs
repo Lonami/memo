@@ -296,10 +296,10 @@ impl LiveScan {
                     // the trait implementor guarantees unaligned reads are supported, and any
                     // bit-pattern is valid.
                     unsafe {
-                        dbg!(P::applicable(
+                        P::applicable(
                             self.memory.as_ptr().add(addr),
                             memory.as_ptr().add(addr)
-                        ))
+                        )
                     }
                 })
                 .collect(),
@@ -396,7 +396,7 @@ macro_rules! impl_int_pred {
             // SAFETY: unaligned reads are supported and any bit-pattern is valid for the type.
             #[inline(always)]
             unsafe fn applicable(old: *const u8, new: *const u8) -> bool {
-                dbg!(new.cast::<$ty>().read_unaligned()) $cmp dbg!(old.cast::<$ty>().read_unaligned())
+                new.cast::<$ty>().read_unaligned() $cmp old.cast::<$ty>().read_unaligned()
             }
         }
     };
@@ -496,7 +496,7 @@ where
     // SAFETY: unaligned reads are supported and any bit-pattern is valid for the type.
     #[inline(always)]
     unsafe fn applicable(old: *const u8, new: *const u8) -> bool {
-        dbg!(P::applicable(old, new)) && dbg!(Q::applicable(old.add(P::SIZE), new.add(P::SIZE)))
+        P::applicable(old, new) && Q::applicable(old.add(P::SIZE), new.add(P::SIZE))
     }
 }
 
