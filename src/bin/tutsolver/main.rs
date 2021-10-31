@@ -1,4 +1,5 @@
 mod step1;
+mod step2;
 pub mod ui;
 
 use std::fmt;
@@ -63,7 +64,7 @@ fn main() {
 
     match ui::prompt::<u8>("Which tutorial step to run?: ").unwrap() {
         1 => step1::solve(process, regions),
-        2 => step1::solve(process, regions),
+        2 => step2::solve(process, regions),
         n => println!("Don't know how to solve {} just yet!", n),
     }
 }
