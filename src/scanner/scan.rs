@@ -3,6 +3,9 @@ use std::marker::PhantomData;
 use std::mem;
 use std::ops::Range;
 
+/// Shrink [`CandidateLocations`]'s buffer when its (capacity / length) is this large.
+const SHRINK_LOCATIONS_BUFFER_RATIO: usize = 4;
+
 pub unsafe trait Predicate {
     /// The mandated size for the memory views in [`Self::applicable`].
     ///
@@ -177,10 +180,18 @@ impl CandidateLocations {
     }
 
     /// Tries to compact the candidate locations into a more efficient representation.
+    ///
+    /// If this is not possible, it attempts to shrink the buffer if it would be worthwhile.
     pub fn try_compact(&mut self, value_size: usize) {
         let locations = match self {
             CandidateLocations::Discrete { locations } if locations.len() >= 2 => {
                 mem::take(locations)
+            }
+            CandidateLocations::SmallDiscrete { offsets, .. } => {
+                if offsets.len() * SHRINK_LOCATIONS_BUFFER_RATIO < offsets.capacity() {
+                    offsets.shrink_to_fit();
+                }
+                return;
             }
             _ => return,
         };
@@ -232,6 +243,11 @@ impl CandidateLocations {
 
         // Neither of the attempts is really better than just storing the locations.
         // Revert to using a discrete representation.
+        let mut locations = locations;
+        if locations.len() * SHRINK_LOCATIONS_BUFFER_RATIO < locations.capacity() {
+            locations.shrink_to_fit();
+        }
+
         *self = CandidateLocations::Discrete { locations };
     }
 
