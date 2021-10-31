@@ -4,6 +4,7 @@ use winapi::um::winnt::MEMORY_BASIC_INFORMATION;
 /// A memory region obtained from a [`crate::Process`].
 ///
 /// Contains information about a certain page range.
+#[derive(Clone)]
 pub struct Region(pub(crate) MEMORY_BASIC_INFORMATION);
 
 pub struct Iter<'p> {
