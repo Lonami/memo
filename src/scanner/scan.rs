@@ -121,6 +121,16 @@ impl CandidateLocations {
         }
     }
 
+    /// Return whether there are no more candidate locations.
+    pub fn is_empty(&self) -> bool {
+        match self {
+            CandidateLocations::Discrete { locations } => locations.is_empty(),
+            CandidateLocations::SmallDiscrete { offsets, .. } => offsets.is_empty(),
+            CandidateLocations::Dense { range, .. } => range.is_empty(),
+            CandidateLocations::Sparse { mask, .. } => !mask.iter().any(|x| *x),
+        }
+    }
+
     /// Tries to compact the candidate locations into a more efficient representation.
     pub fn try_compact(&mut self, value_size: usize) {
         let locations = match self {
