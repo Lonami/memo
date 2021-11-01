@@ -381,6 +381,9 @@ impl LiveScan {
     /// This is useful when it would be too tedious to define a new type and implement [`Predicate`]
     /// on it, or when a runtime value is needed (e.g., "keep values which were decreased by 5 units").
     ///
+    /// Because any values may be passed in, it is recommended to use wrapping arithmetic in order to
+    /// prevent overflows (or underflows).
+    ///
     /// Return the previous memory buffer.
     ///
     /// Panics if the input memory size does not match the size of the previous snapshot.
