@@ -10,14 +10,14 @@ pub fn solve(process: Process, regions: Vec<Region>) {
     let mut scan = Scan {
         size: mem::size_of::<i32>(),
         stride: mem::size_of::<i32>(),
-        predicate: |v| life.to_le_bytes() == v,
+        predicate: |v| life.to_ne_bytes() == v,
     }
     .run_on_process(&process, regions.iter().cloned())
     .unwrap();
     println!("Found {} locations", scan.locations().len());
 
     while let Ok(life) = ui::prompt::<i32>("Enter new value (or invalid to stop): ") {
-        scan.keep_with(|_old, new| life.to_le_bytes() == new);
+        scan.keep_with(|_old, new| life.to_ne_bytes() == new);
         println!("Now have {} locations", scan.locations().len());
         if scan.locations().len() <= 1 {
             break;
@@ -26,7 +26,7 @@ pub fn solve(process: Process, regions: Vec<Region>) {
 
     let life = ui::prompt::<i32>("Enter new life value: ").unwrap();
     for addr in scan.locations().iter() {
-        process.write_memory_all(addr, &life.to_le_bytes()).unwrap();
+        process.write_memory_all(addr, &life.to_ne_bytes()).unwrap();
     }
 
     println!("Done!");

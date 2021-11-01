@@ -11,7 +11,7 @@ pub fn solve(process: Process, regions: Vec<Region>) {
     let mut scan = Scan {
         size: mem::size_of::<i32>(),
         stride: mem::size_of::<i32>(),
-        predicate: |v| (0..=life).contains(&i32::from_le_bytes(v.try_into().unwrap())),
+        predicate: |v| (0..=life).contains(&i32::from_ne_bytes(v.try_into().unwrap())),
     }
     .run_on_process(&process, regions.iter().cloned())
     .unwrap();
@@ -19,8 +19,8 @@ pub fn solve(process: Process, regions: Vec<Region>) {
 
     while let Ok(delta) = ui::prompt::<i32>("Enter decreased-by amount (or invalid to stop): ") {
         scan.keep_with(|old, new| {
-            i32::from_le_bytes(old.try_into().unwrap())
-                .wrapping_sub(i32::from_le_bytes(new.try_into().unwrap()))
+            i32::from_ne_bytes(old.try_into().unwrap())
+                .wrapping_sub(i32::from_ne_bytes(new.try_into().unwrap()))
                 == delta
         });
         println!("Now have {} locations", scan.locations().len());
@@ -31,7 +31,7 @@ pub fn solve(process: Process, regions: Vec<Region>) {
 
     let life = ui::prompt::<i32>("Enter new life value: ").unwrap();
     for addr in scan.locations().iter() {
-        process.write_memory_all(addr, &life.to_le_bytes()).unwrap();
+        process.write_memory_all(addr, &life.to_ne_bytes()).unwrap();
     }
 
     println!("Done!");
