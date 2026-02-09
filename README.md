@@ -1,3 +1,7 @@
+Moved to https://codeberg.org/Lonami/memo. The GitHub repository may be deleted in the future.
+
+---
+
 # memo
 
 > *Disclaimer: this project does not condone the illegal use of the tool.*
